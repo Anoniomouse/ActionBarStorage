@@ -1,16 +1,29 @@
 local ABS = ActionBarStorage
 
--- Bar definitions: each bar maps to 12 consecutive action slots
+-- Bar definitions: each bar maps to 12 consecutive action slots.
+-- Extended to 18 bars so ElvUI / Bartender4 extra bars (slots 97-216) are covered.
 ABS.BARS = {
-    { id = 1, label = "Main Bar (1)",           startSlot = 1  },
-    { id = 2, label = "Bar 2",                  startSlot = 13 },
-    { id = 3, label = "Bar 3",                  startSlot = 25 },
-    { id = 4, label = "Bar 4",                  startSlot = 37 },
-    { id = 5, label = "Multi-Bar Bottom Left",  startSlot = 49 },
-    { id = 6, label = "Multi-Bar Bottom Right", startSlot = 61 },
-    { id = 7, label = "Multi-Bar Right",        startSlot = 73 },
-    { id = 8, label = "Multi-Bar Left",         startSlot = 85 },
+    { id = 1,  label = "Main Bar (1)",           startSlot = 1   },
+    { id = 2,  label = "Bar 2",                  startSlot = 13  },
+    { id = 3,  label = "Bar 3",                  startSlot = 25  },
+    { id = 4,  label = "Bar 4",                  startSlot = 37  },
+    { id = 5,  label = "Multi-Bar Bottom Left",  startSlot = 49  },
+    { id = 6,  label = "Multi-Bar Bottom Right", startSlot = 61  },
+    { id = 7,  label = "Multi-Bar Right",        startSlot = 73  },
+    { id = 8,  label = "Multi-Bar Left",         startSlot = 85  },
+    { id = 9,  label = "Bar 9",                  startSlot = 97  },
+    { id = 10, label = "Bar 10",                 startSlot = 109 },
+    { id = 11, label = "Bar 11",                 startSlot = 121 },
+    { id = 12, label = "Bar 12",                 startSlot = 133 },
+    { id = 13, label = "Bar 13",                 startSlot = 145 },
+    { id = 14, label = "Bar 14",                 startSlot = 157 },
+    { id = 15, label = "Bar 15",                 startSlot = 169 },
+    { id = 16, label = "Bar 16",                 startSlot = 181 },
+    { id = 17, label = "Bar 17",                 startSlot = 193 },
+    { id = 18, label = "Bar 18",                 startSlot = 205 },
 }
+local MAX_BAR  = #ABS.BARS          -- 18
+local MAX_SLOT = MAX_BAR * 12       -- 216
 
 -- Candidate frame names per bar. Blizzard names first, then ElvUI, Bartender4, Dominos.
 ABS.BAR_FRAME_CANDIDATES = {
@@ -64,7 +77,7 @@ function ABS:GetVisibleBarFrames()
         local slot
         -- Field access on userdata frames can error on some proxy types.
         pcall(function() slot = f.action end)
-        if type(slot) == "number" and slot >= 1 and slot <= 96 then
+        if type(slot) == "number" and slot >= 1 and slot <= MAX_SLOT then
             local ok, shown = pcall(function() return f:IsShown() end)
             if ok and shown then
                 local barId = math.ceil(slot / 12)
@@ -78,7 +91,7 @@ function ABS:GetVisibleBarFrames()
     -- Require ≥2 visible buttons so we don't pick up stray buttons.
     -- Use the first button's parent as the representative bar frame.
     for barId, buttons in pairs(barButtons) do
-        if barId >= 1 and barId <= 8 and #buttons >= 2 then
+        if barId >= 1 and barId <= MAX_BAR and #buttons >= 2 then
             local ok, parent = pcall(function() return buttons[1]:GetParent() end)
             if ok and parent then
                 found[barId] = parent
@@ -138,19 +151,40 @@ local function PickupSpellByID(spellID)
         ClearCursor()
     end
 
-    -- Mount spells live in the Mount Journal, not the spellbook. Search by
-    -- matching spellID, then pick up with C_MountJournal.Pickup(mountID).
-    if C_MountJournal and C_MountJournal.GetMountIDs and C_MountJournal.Pickup then
-        for _, mountID in ipairs(C_MountJournal.GetMountIDs()) do
-            local ok, a, b = pcall(C_MountJournal.GetMountInfoByID, mountID)
-            if ok then
-                -- GetMountInfoByID: returns table in some versions, (name, spellID, …) in others.
-                local mountSpellID = (type(a) == "table" and a.spellID) or b
-                if mountSpellID == spellID then
-                    pcall(C_MountJournal.Pickup, mountID)
-                    if GetCursorInfo() then return true end
-                    ClearCursor()
-                    break
+    -- Mount spells live in the Mount Journal, not in the spellbook.
+    if C_MountJournal then
+        -- Special case: "Summon Random Favorite Mount" is not in GetMountIDs().
+        -- Identify it via GetSummonRandomFavoriteMountSpell() and pick it up
+        -- with PickupSummonRandomFavoriteMount() or Pickup(0) as a fallback.
+        local getRandomFn = C_MountJournal.GetSummonRandomFavoriteMountSpell
+        if getRandomFn then
+            local randomSpellID = getRandomFn()
+            if randomSpellID == spellID then
+                pcall(function()
+                    if C_MountJournal.PickupSummonRandomFavoriteMount then
+                        C_MountJournal.PickupSummonRandomFavoriteMount()
+                    else
+                        C_MountJournal.Pickup(0)
+                    end
+                end)
+                if GetCursorInfo() then return true end
+                ClearCursor()
+            end
+        end
+
+        -- Search all collected mounts by matching spell ID.
+        if C_MountJournal.GetMountIDs and C_MountJournal.Pickup then
+            for _, mountID in ipairs(C_MountJournal.GetMountIDs()) do
+                local ok, a, b = pcall(C_MountJournal.GetMountInfoByID, mountID)
+                if ok then
+                    -- Returns (name, spellID, …) as multiple values, or a table in 12.0+
+                    local mountSpellID = (type(a) == "table" and a.spellID) or b
+                    if mountSpellID == spellID then
+                        pcall(C_MountJournal.Pickup, mountID)
+                        if GetCursorInfo() then return true end
+                        ClearCursor()
+                        break
+                    end
                 end
             end
         end
