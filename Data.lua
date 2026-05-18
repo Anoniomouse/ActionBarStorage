@@ -52,14 +52,6 @@ end
 function ABS:GetVisibleBarFrames()
     local found = {}
 
-    -- pcall wrappers: some UIParent children are Lua proxy tables whose C-level
-    -- frame methods reject the self argument even though the method field exists.
-    local function safeIsShown(f)
-        if not f then return false end
-        local ok, shown = pcall(function() return f:IsShown() end)
-        return ok and shown == true
-    end
-
     local function safeGetChildren(f)
         if not f then return {} end
         local children
@@ -67,37 +59,39 @@ function ABS:GetVisibleBarFrames()
         return (ok and children) or {}
     end
 
+    -- Returns barId (1-8) if the frame has ≥2 action-button children with valid
+    -- slot numbers AND at least 1 button is visible; otherwise nil.
+    -- Checking button visibility (rather than parent frame visibility) is more
+    -- reliable: some addons hide the container frame but still show the buttons.
     local function GetFrameBarId(frame)
         if not frame then return nil end
         local children = safeGetChildren(frame)
-        local count, barId = 0, nil
+        local count, visCount, barId = 0, 0, nil
         for _, child in ipairs(children) do
             local slot = child and child.action
             if type(slot) == "number" and slot >= 1 and slot <= 96 then
                 count = count + 1
                 if not barId then barId = math.ceil(slot / 12) end
-                if count >= 2 then return barId end
+                local ok, shown = pcall(function() return child:IsShown() end)
+                if ok and shown then visCount = visCount + 1 end
             end
         end
+        if count >= 2 and visCount >= 1 then return barId end
         return nil
     end
 
-    -- Recursively walk visible frames up to maxDepth levels below root.
-    -- ElvUI and some other addons nest bars 3-4 levels deep inside containers.
-    local function scanFrame(frame, depth)
-        if depth <= 0 or not safeIsShown(frame) then return end
-        local bid = GetFrameBarId(frame)
-        if bid and bid >= 1 and bid <= 8 and not found[bid] then
-            found[bid] = frame
-        else
-            for _, child in ipairs(safeGetChildren(frame)) do
-                scanFrame(child, depth - 1)
+    -- EnumerateFrames walks every created frame globally — no depth limit and no
+    -- reliance on UIParent child ordering. This catches bars inside hidden
+    -- container frames (common in ElvUI / Bartender4 / Dominos).
+    if EnumerateFrames then
+        local frame = EnumerateFrames()
+        while frame do
+            local bid = GetFrameBarId(frame)
+            if bid and bid >= 1 and bid <= 8 and not found[bid] then
+                found[bid] = frame
             end
+            frame = EnumerateFrames(frame)
         end
-    end
-
-    for _, topFrame in ipairs({UIParent:GetChildren()}) do
-        scanFrame(topFrame, 4)
     end
 
     return found
@@ -179,12 +173,19 @@ function ABS:WriteBar(targetBarId, slots)
 
     for i, sd in ipairs(slots) do
         local targetSlot = barDef.startSlot + i - 1
+
+        -- Always clear the target slot first. PickupAction on an empty slot is a
+        -- no-op; on a filled slot it moves the action to the cursor so ClearCursor
+        -- discards it — leaving the slot empty before we place the new action.
+        -- This also handles the "replace existing" and "make empty" cases.
+        PickupAction(targetSlot)
+        ClearCursor()
+
         local picked = false
 
         if sd.actionType == "spell" and sd.id then
             picked = PickupSpellByID(sd.id)
         elseif sd.actionType == "macro" then
-            -- Try by name first so it works across characters
             local lookupKey = (sd.name and sd.name ~= "") and sd.name or sd.id
             if lookupKey then
                 PickupMacro(lookupKey)
