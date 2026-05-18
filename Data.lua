@@ -54,8 +54,9 @@ function ABS:ReadBar(barId)
             name    = mname or ("Macro " .. id)
             texture = micon
         elseif actionType == "item" and id then
+            -- GetItemInfo may return nil for uncached items; name will show on next load
             local iname, _, _, _, _, _, _, _, _, itex = GetItemInfo(id)
-            name    = iname or ("Item " .. id)
+            name    = iname or ("Item #" .. id)
             texture = itex
         end
 

@@ -233,9 +233,9 @@ renameBtn:SetScript("OnClick", function()
         button1     = "Rename",
         button2     = "Cancel",
         hasEditBox  = true,
-        OnShow      = function(d) d.editBox:SetText(old); d.editBox:HighlightText() end,
+        OnShow      = function(d) d.EditBox:SetText(old); d.EditBox:HighlightText() end,
         OnAccept    = function(d)
-            local new = d.editBox:GetText():match("^%s*(.-)%s*$")
+            local new = d.EditBox:GetText():match("^%s*(.-)%s*$")
             if not new or new == "" then return end
             if ABS:RenameProfile(old, new) then
                 selectedProfile = new
@@ -245,7 +245,10 @@ renameBtn:SetScript("OnClick", function()
                 print("|cffFF4444[Action Bar Storage]|r That name is already in use.")
             end
         end,
-        EditBoxOnEnterPressed = function(eb) eb:GetParent().button1:Click() end,
+        EditBoxOnEnterPressed = function(eb)
+            local btn = eb:GetParent().button1 or (eb:GetParent().Buttons and eb:GetParent().Buttons[1])
+            if btn and btn:IsEnabled() then btn:Click() end
+        end,
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
     StaticPopup_Show("ABS_RENAME")
@@ -415,7 +418,7 @@ newBtn:SetScript("OnClick", function()
         button2     = "Cancel",
         hasEditBox  = true,
         OnAccept    = function(d)
-            local name = d.editBox:GetText():match("^%s*(.-)%s*$")
+            local name = d.EditBox:GetText():match("^%s*(.-)%s*$")
             if not name or name == "" then return end
             if ABS.db.profiles[name] then
                 print("|cffFF4444[Action Bar Storage]|r Profile \"" .. name .. "\" already exists.")
@@ -432,7 +435,10 @@ newBtn:SetScript("OnClick", function()
                 print("|cff00ccff[Action Bar Storage]|r Profile \"" .. name .. "\" saved (" .. #barIds .. " bar(s)).")
             end)
         end,
-        EditBoxOnEnterPressed = function(eb) eb:GetParent().button1:Click() end,
+        EditBoxOnEnterPressed = function(eb)
+            local btn = eb:GetParent().button1 or (eb:GetParent().Buttons and eb:GetParent().Buttons[1])
+            if btn and btn:IsEnabled() then btn:Click() end
+        end,
         timeout = 0, whileDead = true, hideOnEscape = true,
     }
     StaticPopup_Show("ABS_NEW")
