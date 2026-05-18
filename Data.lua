@@ -52,15 +52,31 @@ end
 function ABS:GetVisibleBarFrames()
     local found = {}
 
+    -- pcall wrappers: some UIParent children are Lua proxy tables whose C-level
+    -- frame methods reject the self argument even though the method field exists.
+    local function safeIsShown(f)
+        if not f then return false end
+        local ok, shown = pcall(function() return f:IsShown() end)
+        return ok and shown == true
+    end
+
+    local function safeGetChildren(f)
+        if not f then return {} end
+        local children
+        local ok = pcall(function() children = {f:GetChildren()} end)
+        return (ok and children) or {}
+    end
+
     local function GetFrameBarId(frame)
-        if not frame.GetChildren then return nil end
+        if not frame then return nil end
+        local children = safeGetChildren(frame)
         local count, barId = 0, nil
-        for _, child in ipairs({frame:GetChildren()}) do
-            local slot = child.action
+        for _, child in ipairs(children) do
+            local slot = child and child.action
             if type(slot) == "number" and slot >= 1 and slot <= 96 then
                 count = count + 1
                 if not barId then barId = math.ceil(slot / 12) end
-                if count >= 2 then return barId end  -- confirmed bar
+                if count >= 2 then return barId end
             end
         end
         return nil
@@ -69,19 +85,16 @@ function ABS:GetVisibleBarFrames()
     -- Walk UIParent's visible children and one level of sub-frames.
     -- Action bars are almost always within 2 levels of UIParent.
     for _, topFrame in ipairs({UIParent:GetChildren()}) do
-        if topFrame and topFrame.IsShown and topFrame:IsShown() then
+        if safeIsShown(topFrame) then
             local bid = GetFrameBarId(topFrame)
             if bid and bid >= 1 and bid <= 8 and not found[bid] then
                 found[bid] = topFrame
             else
-                -- Check one level deeper (e.g. a bar inside a container frame)
-                if topFrame.GetChildren then
-                    for _, sub in ipairs({topFrame:GetChildren()}) do
-                        if sub and sub.IsShown and sub:IsShown() then
-                            local sbid = GetFrameBarId(sub)
-                            if sbid and sbid >= 1 and sbid <= 8 and not found[sbid] then
-                                found[sbid] = sub
-                            end
+                for _, sub in ipairs(safeGetChildren(topFrame)) do
+                    if safeIsShown(sub) then
+                        local sbid = GetFrameBarId(sub)
+                        if sbid and sbid >= 1 and sbid <= 8 and not found[sbid] then
+                            found[sbid] = sub
                         end
                     end
                 end
