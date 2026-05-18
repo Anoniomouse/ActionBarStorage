@@ -123,8 +123,8 @@ function ABS:ReadBar(barId)
             name    = mname or ("Macro " .. id)
             texture = micon
         elseif actionType == "item" and id then
-            -- GetItemInfo may return nil for uncached items; name will show on next load
-            local iname, _, _, _, _, _, _, _, _, itex = GetItemInfo(id)
+            -- C_Item.GetItemInfo may return nil for uncached items; name will show on next load
+            local iname, _, _, _, _, _, _, _, _, itex = C_Item.GetItemInfo(id)
             name    = iname or ("Item #" .. id)
             texture = itex
         end
@@ -144,14 +144,15 @@ end
 -- PickupSpellBookItem was removed in Midnight 12.0; use C_SpellBook variant or
 -- the direct PickupSpell(spellID) global when available.
 local function PickupSpellByID(spellID)
-    -- PickupSpell picks up by spell ID directly — preferred when present.
-    if PickupSpell then
-        PickupSpell(spellID)
+    -- C_Spell.PickupSpell is the preferred 12.0 API; PickupSpell is the legacy fallback.
+    local directFn = (C_Spell and C_Spell.PickupSpell) or PickupSpell
+    if directFn then
+        directFn(spellID)
         if GetCursorInfo() then return true end
         ClearCursor()
     end
-    -- Fall back: iterate spellbook and use whichever pickup function exists.
-    local pickupFn = (C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
+    -- Last resort: iterate spellbook and use C_SpellBook.PickupSpellBookItem.
+    local pickupFn = (C_SpellBook and C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
     if not pickupFn then return false end
     local i = 1
     while true do
