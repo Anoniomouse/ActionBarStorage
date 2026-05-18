@@ -254,109 +254,148 @@ renameBtn:SetScript("OnClick", function()
     StaticPopup_Show("ABS_RENAME")
 end)
 
--- ── Bar selector overlay ──────────────────────────────────────────────────────
+-- ── Bar selector (IsMouseOver scanning — works with ElvUI, Bartender4, etc.) ──
+--
+-- Instead of placing clickable overlays on known frame names (which breaks with
+-- third-party bar addons), we use a full-screen click-catcher at high frame level
+-- combined with an OnUpdate scanner that calls IsMouseOver() on every candidate
+-- frame. IsMouseOver() is purely geometric — it doesn't care about frame stacking
+-- or which addon owns the frame, so it works with ElvUI out of the box.
+
 local sel = {
-    active   = false,
-    chosen   = {},
-    overlays = {},
-    onDone   = nil,
+    active    = false,
+    chosen    = {},       -- barId -> true
+    barFrames = {},       -- barId -> frame (populated each StartSelector call)
+    hoveredId = nil,
+    onDone    = nil,
 }
 
-local function BuildOverlay(barId)
-    local ov = CreateFrame("Button", nil, UIParent)
-    ov:SetFrameLevel(200)
-    ov:EnableMouse(true)
-    ov:Hide()
-
-    -- Semi-transparent background so the bar is still visible underneath
-    ov.bg = ov:CreateTexture(nil, "BACKGROUND")
-    ov.bg:SetAllPoints()
-    ov.bg:SetColorTexture(0, 0, 0, 0.3)
-
-    -- Border glow shown on hover and when selected
-    ov.glow = ov:CreateTexture(nil, "OVERLAY")
-    ov.glow:SetAllPoints()
-    ov.glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
-    ov.glow:SetBlendMode("ADD")
-    ov.glow:Hide()
-
-    -- Checkmark shown when bar is selected
-    ov.check = ov:CreateTexture(nil, "OVERLAY")
-    ov.check:SetSize(28, 28)
-    ov.check:SetPoint("TOPRIGHT", -4, -4)
-    ov.check:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-    ov.check:Hide()
-
-    -- Bar label centered on the overlay
-    ov.lbl = ov:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    ov.lbl:SetPoint("CENTER")
-    ov.lbl:SetText(ABS.BARS[barId].label)
-    ov.lbl:SetTextColor(1, 1, 1, 1)
-
-    ov:SetScript("OnEnter", function(self)
-        if sel.active and not sel.chosen[barId] then
-            self.glow:Show()
-            self.glow:SetVertexColor(1, 0.82, 0, 0.85)
-        end
-    end)
-    ov:SetScript("OnLeave", function(self)
-        if sel.active and not sel.chosen[barId] then
-            self.glow:Hide()
-        end
-    end)
-    ov:SetScript("OnClick", function(self)
-        if not sel.active then return end
-        if sel.chosen[barId] then
-            sel.chosen[barId] = nil
-            self.check:Hide()
-            self.glow:Hide()
-        else
-            sel.chosen[barId] = true
-            self.check:Show()
-            self.glow:Show()
-            self.glow:SetVertexColor(0.1, 0.9, 0.1, 0.85)
-        end
-    end)
-
-    return ov
+-- Yellow highlight shown over whichever bar the cursor is currently over
+local selHover = CreateFrame("Frame", nil, UIParent)
+selHover:SetFrameLevel(188)
+selHover:EnableMouse(false)
+selHover:Hide()
+do
+    local t = selHover:CreateTexture(nil, "OVERLAY")
+    t:SetAllPoints()
+    t:SetColorTexture(1, 0.82, 0, 0.3)
+    selHover.lbl = selHover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    selHover.lbl:SetPoint("CENTER")
+    selHover.lbl:SetTextColor(1, 1, 0, 1)
 end
+
+-- Per-bar green overlays shown for bars that have been selected
+local selGreen = {}   -- barId -> frame
+local function GetGreenOverlay(barId)
+    if not selGreen[barId] then
+        local f = CreateFrame("Frame", nil, UIParent)
+        f:SetFrameLevel(187)
+        f:EnableMouse(false)
+        f:Hide()
+        local t = f:CreateTexture(nil, "OVERLAY")
+        t:SetAllPoints()
+        t:SetColorTexture(0.1, 0.9, 0.1, 0.3)
+        local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("CENTER")
+        lbl:SetText("|cff00ff00[Selected]|r")
+        selGreen[barId] = f
+    end
+    return selGreen[barId]
+end
+
+-- Full-screen click-catcher intercepts left-clicks during selector mode so the
+-- user doesn't accidentally cast spells or open menus while selecting bars.
+local selCatcher = CreateFrame("Frame", "ABS_SelCatcher", UIParent)
+selCatcher:SetAllPoints(UIParent)
+selCatcher:SetFrameLevel(189)
+selCatcher:EnableMouse(true)
+selCatcher:Hide()
+selCatcher:SetScript("OnMouseDown", function(_, button)
+    if not sel.active or button ~= "LeftButton" then return end
+    local barId = sel.hoveredId
+    if not barId then return end
+    local f = sel.barFrames[barId]
+    if not f then return end
+
+    if sel.chosen[barId] then
+        sel.chosen[barId] = nil
+        GetGreenOverlay(barId):Hide()
+    else
+        sel.chosen[barId] = true
+        GetGreenOverlay(barId):SetAllPoints(f)
+        GetGreenOverlay(barId):Show()
+    end
+end)
+
+-- OnUpdate frame: scans candidates with IsMouseOver() each frame.
+-- Showing/hiding this frame starts/stops the scan.
+local selScanner = CreateFrame("Frame", nil, UIParent)
+selScanner:Hide()
+selScanner:SetScript("OnUpdate", function()
+    if not sel.active then return end
+
+    local found = nil
+    for barId, frame in pairs(sel.barFrames) do
+        if frame:IsMouseOver() then
+            found = barId
+            break
+        end
+    end
+
+    if found ~= sel.hoveredId then
+        sel.hoveredId = found
+        if found then
+            local def = ABS.BARS[found]
+            selHover:SetAllPoints(sel.barFrames[found])
+            selHover.lbl:SetText(def and def.label or ("Bar " .. found))
+            selHover:Show()
+        else
+            selHover:Hide()
+        end
+    end
+end)
 
 local selPanel
 
 local function StopSelector()
-    sel.active = false
-    sel.chosen = {}
-    for _, ov in pairs(sel.overlays) do ov:Hide() end
+    sel.active    = false
+    sel.chosen    = {}
+    sel.hoveredId = nil
+    sel.barFrames = {}
+    selHover:Hide()
+    selCatcher:Hide()
+    selScanner:Hide()
+    for _, ov in pairs(selGreen) do ov:Hide() end
     if selPanel then selPanel:Hide() end
     main:Show()
     RefreshList()
 end
 
 local function StartSelector(onDone)
-    sel.active = true
-    sel.chosen = {}
-    sel.onDone = onDone
-    main:Hide()
+    sel.active    = true
+    sel.chosen    = {}
+    sel.hoveredId = nil
+    sel.onDone    = onDone
 
-    for barId = 1, #ABS.BARS do
-        if not sel.overlays[barId] then
-            sel.overlays[barId] = BuildOverlay(barId)
-        end
-        local ov      = sel.overlays[barId]
-        local barFrame = ABS:GetBarFrame(barId)
-        ov.check:Hide()
-        ov.glow:Hide()
-        if barFrame then
-            ov:SetAllPoints(barFrame)
-            ov:Show()
-        else
-            ov:Hide()
-        end
+    -- Discover visible bar frames (supports any action bar addon)
+    sel.barFrames = ABS:GetVisibleBarFrames()
+
+    if not next(sel.barFrames) then
+        print("|cffFF4444[Action Bar Storage]|r No action bar frames detected. Make sure your bars are visible.")
+        return
     end
+
+    -- Reset overlays from any previous run
+    selHover:Hide()
+    for _, ov in pairs(selGreen) do ov:Hide() end
+
+    selCatcher:Show()
+    selScanner:Show()
+    main:Hide()
 
     if not selPanel then
         selPanel = CreateFrame("Frame", "ABS_SelPanel", UIParent, "BasicFrameTemplate")
-        selPanel:SetSize(300, 96)
+        selPanel:SetSize(310, 100)
         selPanel:SetPoint("TOP", UIParent, "TOP", 0, -60)
         selPanel:SetMovable(true)
         selPanel:EnableMouse(true)
@@ -366,34 +405,30 @@ local function StartSelector(onDone)
         selPanel.TitleText:SetText("Select Bars")
 
         local instr = selPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        instr:SetPoint("TOPLEFT", 10, -24)
-        instr:SetText("Hover over an action bar and click it to\nselect it. Click again to deselect.")
+        instr:SetPoint("TOPLEFT", 10, -26)
+        instr:SetText("Hover over a bar (turns yellow) and click\nto select it (turns green). Click again to deselect.")
         instr:SetJustifyH("LEFT")
 
-        local allBtn     = Btn(selPanel, 60,  22, "All")
-        local confirmBtn = Btn(selPanel, 70,  22, "Confirm")
-        local cancelBtn  = Btn(selPanel, 65,  22, "Cancel")
+        local allBtn     = Btn(selPanel, 55, 22, "All")
+        local confirmBtn = Btn(selPanel, 70, 22, "Confirm")
+        local cancelBtn  = Btn(selPanel, 65, 22, "Cancel")
         allBtn:SetPoint(    "BOTTOMLEFT",  selPanel, "BOTTOMLEFT", 8, 8)
         confirmBtn:SetPoint("LEFT", allBtn, "RIGHT", 4, 0)
         cancelBtn:SetPoint( "LEFT", confirmBtn, "RIGHT", 4, 0)
 
         allBtn:SetScript("OnClick", function()
-            for barId = 1, #ABS.BARS do
-                local ov = sel.overlays[barId]
-                if ov and ov:IsShown() then
+            for barId, f in pairs(sel.barFrames) do
+                if not sel.chosen[barId] then
                     sel.chosen[barId] = true
-                    ov.check:Show()
-                    ov.glow:Show()
-                    ov.glow:SetVertexColor(0.1, 0.9, 0.1, 0.85)
+                    GetGreenOverlay(barId):SetAllPoints(f)
+                    GetGreenOverlay(barId):Show()
                 end
             end
         end)
 
         confirmBtn:SetScript("OnClick", function()
             local ids = {}
-            for barId in pairs(sel.chosen) do
-                table.insert(ids, barId)
-            end
+            for barId in pairs(sel.chosen) do table.insert(ids, barId) end
             table.sort(ids)
             local cb = sel.onDone
             StopSelector()
@@ -407,6 +442,8 @@ local function StartSelector(onDone)
         cancelBtn:SetScript("OnClick", StopSelector)
     end
 
+    -- Ensure the control panel stays above the click-catcher
+    selPanel:SetFrameLevel(200)
     selPanel:Show()
 end
 
@@ -414,7 +451,7 @@ end
 newBtn:SetScript("OnClick", function()
     StaticPopupDialogs["ABS_NEW"] = {
         text        = "Enter a name for the new profile:",
-        button1     = "Next \226\134\146",
+        button1     = "Next >>",
         button2     = "Cancel",
         hasEditBox  = true,
         OnAccept    = function(d)

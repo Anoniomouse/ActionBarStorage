@@ -12,18 +12,28 @@ ABS.BARS = {
     { id = 8, label = "Multi-Bar Left",         startSlot = 85 },
 }
 
--- Candidate frame names for each bar; first visible match is used
+-- Candidate frame names per bar. Blizzard names first, then ElvUI, Bartender4, Dominos.
 ABS.BAR_FRAME_CANDIDATES = {
-    [1] = { "MainMenuBar",        "MainActionBarFrame", "ActionBar1" },
-    [2] = { "MultiBarBottomLeft", "ActionBar2" },
-    [3] = { "MultiBarBottomRight","ActionBar3" },
-    [4] = { "MultiBarRight",      "ActionBar4" },
-    [5] = { "MultiBarLeft",       "ActionBar5" },
-    [6] = { "ActionBar6",         "MultiBar5"  },
-    [7] = { "ActionBar7",         "MultiBar6"  },
-    [8] = { "ActionBar8",         "MultiBar7"  },
+    [1] = { "MainMenuBar", "MainActionBarFrame", "ActionBar1",
+            "ElvUI_Bar1",  "BT4Bar1",  "DominosActionBar1" },
+    [2] = { "MultiBarBottomLeft",  "ActionBar2",
+            "ElvUI_Bar2",  "BT4Bar2",  "DominosActionBar2" },
+    [3] = { "MultiBarBottomRight", "ActionBar3",
+            "ElvUI_Bar3",  "BT4Bar3",  "DominosActionBar3" },
+    [4] = { "MultiBarRight",       "ActionBar4",
+            "ElvUI_Bar4",  "BT4Bar4",  "DominosActionBar4" },
+    [5] = { "MultiBarLeft",        "ActionBar5",
+            "ElvUI_Bar5",  "BT4Bar5",  "DominosActionBar5" },
+    [6] = { "ActionBar6",  "MultiBar5",
+            "ElvUI_Bar6",  "BT4Bar6",  "DominosActionBar6" },
+    [7] = { "ActionBar7",  "MultiBar6",
+            "ElvUI_Bar7",  "BT4Bar7",  "DominosActionBar7" },
+    [8] = { "ActionBar8",  "MultiBar7",
+            "ElvUI_Bar8",  "BT4Bar8",  "DominosActionBar8" },
 }
 
+-- Returns the first visible frame found for a bar, or nil.
+-- Used for saving slot data; does not need to be exact for hover detection.
 function ABS:GetBarFrame(barId)
     for _, name in ipairs(self.BAR_FRAME_CANDIDATES[barId] or {}) do
         local f = _G[name]
@@ -32,6 +42,35 @@ function ABS:GetBarFrame(barId)
         end
     end
     return nil
+end
+
+-- Returns barId -> frame table for all bars that are currently visible.
+-- Used by the selector overlay; tries IsShown first, falls back to any frame
+-- with non-zero width so third-party bars with unusual show/hide logic are found.
+function ABS:GetVisibleBarFrames()
+    local found = {}
+    for barId = 1, #self.BARS do
+        local candidates = self.BAR_FRAME_CANDIDATES[barId] or {}
+        -- Pass 1: prefer frames that report IsShown
+        for _, name in ipairs(candidates) do
+            local f = _G[name]
+            if f and f.IsShown and f:IsShown() then
+                found[barId] = f
+                break
+            end
+        end
+        -- Pass 2: accept any frame with a non-zero rendered width
+        if not found[barId] then
+            for _, name in ipairs(candidates) do
+                local f = _G[name]
+                if f and f.GetWidth and f:GetWidth() > 0 then
+                    found[barId] = f
+                    break
+                end
+            end
+        end
+    end
+    return found
 end
 
 -- Read all 12 slots from a bar and return an array of slot data
