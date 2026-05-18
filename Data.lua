@@ -82,24 +82,22 @@ function ABS:GetVisibleBarFrames()
         return nil
     end
 
-    -- Walk UIParent's visible children and one level of sub-frames.
-    -- Action bars are almost always within 2 levels of UIParent.
-    for _, topFrame in ipairs({UIParent:GetChildren()}) do
-        if safeIsShown(topFrame) then
-            local bid = GetFrameBarId(topFrame)
-            if bid and bid >= 1 and bid <= 8 and not found[bid] then
-                found[bid] = topFrame
-            else
-                for _, sub in ipairs(safeGetChildren(topFrame)) do
-                    if safeIsShown(sub) then
-                        local sbid = GetFrameBarId(sub)
-                        if sbid and sbid >= 1 and sbid <= 8 and not found[sbid] then
-                            found[sbid] = sub
-                        end
-                    end
-                end
+    -- Recursively walk visible frames up to maxDepth levels below root.
+    -- ElvUI and some other addons nest bars 3-4 levels deep inside containers.
+    local function scanFrame(frame, depth)
+        if depth <= 0 or not safeIsShown(frame) then return end
+        local bid = GetFrameBarId(frame)
+        if bid and bid >= 1 and bid <= 8 and not found[bid] then
+            found[bid] = frame
+        else
+            for _, child in ipairs(safeGetChildren(frame)) do
+                scanFrame(child, depth - 1)
             end
         end
+    end
+
+    for _, topFrame in ipairs({UIParent:GetChildren()}) do
+        scanFrame(topFrame, 4)
     end
 
     return found
@@ -142,14 +140,25 @@ function ABS:ReadBar(barId)
     return slots
 end
 
--- Find a spell in the player spellbook by spellID and pick it up onto the cursor
+-- Find a spell in the player spellbook by spellID and pick it up onto the cursor.
+-- PickupSpellBookItem was removed in Midnight 12.0; use C_SpellBook variant or
+-- the direct PickupSpell(spellID) global when available.
 local function PickupSpellByID(spellID)
+    -- PickupSpell picks up by spell ID directly — preferred when present.
+    if PickupSpell then
+        PickupSpell(spellID)
+        if GetCursorInfo() then return true end
+        ClearCursor()
+    end
+    -- Fall back: iterate spellbook and use whichever pickup function exists.
+    local pickupFn = (C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
+    if not pickupFn then return false end
     local i = 1
     while true do
         local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
         if not info then break end
         if info.spellID == spellID then
-            PickupSpellBookItem(i, Enum.SpellBookSpellBank.Player)
+            pickupFn(i, Enum.SpellBookSpellBank.Player)
             return true
         end
         i = i + 1
