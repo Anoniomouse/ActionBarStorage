@@ -125,7 +125,7 @@ local function RenderDetail(profileName)
     for barId = 1, #ABS.BARS do
         local bd = p.bars[barId]
         if bd then
-            table.insert(lines, "|cffFFD100▸ " .. (bd.label or ("Bar " .. barId)) .. "|r")
+            table.insert(lines, "|cffFFD100>> " .. (bd.label or ("Bar " .. barId)) .. "|r")
             local hasContent = false
             for slotIdx, sd in ipairs(bd.slots) do
                 if sd.actionType ~= "" and sd.id then
