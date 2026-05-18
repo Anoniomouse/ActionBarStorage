@@ -44,32 +44,51 @@ function ABS:GetBarFrame(barId)
     return nil
 end
 
--- Returns barId -> frame table for all bars that are currently visible.
--- Used by the selector overlay; tries IsShown first, falls back to any frame
--- with non-zero width so third-party bars with unusual show/hide logic are found.
+-- Detect visible action bar frames by scanning child button .action slot numbers.
+-- This works with any action bar addon (ElvUI, Bartender4, Dominos, Blizzard)
+-- because all WoW action buttons store their slot number in the .action field.
+-- We require at least 2 action-button children before accepting a frame as a bar,
+-- to avoid false positives from stray buttons.
 function ABS:GetVisibleBarFrames()
     local found = {}
-    for barId = 1, #self.BARS do
-        local candidates = self.BAR_FRAME_CANDIDATES[barId] or {}
-        -- Pass 1: prefer frames that report IsShown
-        for _, name in ipairs(candidates) do
-            local f = _G[name]
-            if f and f.IsShown and f:IsShown() then
-                found[barId] = f
-                break
+
+    local function GetFrameBarId(frame)
+        if not frame.GetChildren then return nil end
+        local count, barId = 0, nil
+        for _, child in ipairs({frame:GetChildren()}) do
+            local slot = child.action
+            if type(slot) == "number" and slot >= 1 and slot <= 96 then
+                count = count + 1
+                if not barId then barId = math.ceil(slot / 12) end
+                if count >= 2 then return barId end  -- confirmed bar
             end
         end
-        -- Pass 2: accept any frame with a non-zero rendered width
-        if not found[barId] then
-            for _, name in ipairs(candidates) do
-                local f = _G[name]
-                if f and f.GetWidth and f:GetWidth() > 0 then
-                    found[barId] = f
-                    break
+        return nil
+    end
+
+    -- Walk UIParent's visible children and one level of sub-frames.
+    -- Action bars are almost always within 2 levels of UIParent.
+    for _, topFrame in ipairs({UIParent:GetChildren()}) do
+        if topFrame:IsShown() then
+            local bid = GetFrameBarId(topFrame)
+            if bid and bid >= 1 and bid <= 8 and not found[bid] then
+                found[bid] = topFrame
+            else
+                -- Check one level deeper (e.g. a bar inside a container frame)
+                if topFrame.GetChildren then
+                    for _, sub in ipairs({topFrame:GetChildren()}) do
+                        if sub:IsShown() then
+                            local sbid = GetFrameBarId(sub)
+                            if sbid and sbid >= 1 and sbid <= 8 and not found[sbid] then
+                                found[sbid] = sub
+                            end
+                        end
+                    end
                 end
             end
         end
     end
+
     return found
 end
 

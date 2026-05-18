@@ -159,10 +159,18 @@ local function RefreshList()
         if not b then
             b = CreateFrame("Button", nil, listChild)
             b:SetSize(LIST_W - 22, 24)
-            b:SetNormalFontObject("GameFontNormal")
-            b:GetFontString():SetJustifyH("LEFT")
-            b:GetFontString():SetPoint("LEFT", b, "LEFT", 6, 0)
-            b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+            -- In Midnight, GetFontString() returns nil on plain buttons.
+            -- Create the font string explicitly and register it.
+            local fs = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            fs:SetPoint("LEFT", b, "LEFT", 6, 0)
+            fs:SetPoint("RIGHT", b, "RIGHT", -4, 0)
+            fs:SetJustifyH("LEFT")
+            b:SetFontString(fs)
+            -- Hover highlight using a color texture (avoids missing texture paths)
+            local hl = b:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.08)
+            -- Selection indicator
             b.selTex = b:CreateTexture(nil, "BACKGROUND")
             b.selTex:SetAllPoints()
             b.selTex:SetColorTexture(1, 0.82, 0, 0.12)
