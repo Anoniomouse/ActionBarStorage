@@ -1,0 +1,10 @@
+## Interface: 120000
+## Title: Action Bar Storage
+## Notes: Save and restore action bar layouts across characters and bars
+## Author: ShawnAnston
+## Version: 1.0.0
+## SavedVariablesPerAccount: ActionBarStorageDB
+
+Core.lua
+Data.lua
+UI.lua
