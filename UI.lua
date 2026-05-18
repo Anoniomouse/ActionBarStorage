@@ -22,7 +22,7 @@ local function Label(parent, fontObj, text, r, g, b)
 end
 
 -- ── Main window ───────────────────────────────────────────────────────────────
-local main = CreateFrame("Frame", "ABS_Main", UIParent, "BasicFrameTemplateWithInset")
+local main = CreateFrame("Frame", "ABS_Main", UIParent, "BasicFrameTemplate")
 main:SetSize(FRAME_W, FRAME_H)
 main:SetPoint("CENTER")
 main:SetMovable(true)
@@ -35,7 +35,10 @@ main:Hide()
 main.TitleText:SetText("Action Bar Storage")
 table.insert(UISpecialFrames, "ABS_Main")
 
-local ins = main.Inset
+-- Create our own content area below the title bar and inside the borders
+local ins = CreateFrame("Frame", nil, main)
+ins:SetPoint("TOPLEFT",     main, "TOPLEFT",     6, -26)
+ins:SetPoint("BOTTOMRIGHT", main, "BOTTOMRIGHT", -6,   6)
 
 -- ── Left panel: profile list ──────────────────────────────────────────────────
 local listHeader = Label(ins, "GameFontNormalLarge", "Profiles", 1, 0.82, 0)
