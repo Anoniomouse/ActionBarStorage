@@ -126,18 +126,18 @@ local function RenderDetail(profileName)
         local bd = p.bars[barId]
         if bd then
             table.insert(lines, "|cffFFD100>> " .. (bd.label or ("Bar " .. barId)) .. "|r")
-            local hasContent = false
             for slotIdx, sd in ipairs(bd.slots) do
                 if sd.actionType ~= "" and sd.id then
-                    hasContent = true
                     local colorCode = "|cffffffff"
                     if sd.actionType == "macro" then colorCode = "|cffaaaaff" end
                     if sd.actionType == "item"  then colorCode = "|cffffcc55" end
-                    table.insert(lines, string.format("   %2d: %s%s|r", slotIdx, colorCode, sd.name or ""))
+                    local displayName = (sd.name and sd.name ~= "") and sd.name
+                                        or (sd.actionType .. " #" .. sd.id)
+                    table.insert(lines, string.format("   %2d: %s%s|r", slotIdx, colorCode, displayName))
+                else
+                    -- Show every slot so none appear "missing" in the list
+                    table.insert(lines, string.format("   |cff444444%2d: (empty)|r", slotIdx))
                 end
-            end
-            if not hasContent then
-                table.insert(lines, "   |cff666666(no actions saved)|r")
             end
             table.insert(lines, "")
         end

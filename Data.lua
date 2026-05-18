@@ -51,46 +51,38 @@ end
 -- to avoid false positives from stray buttons.
 function ABS:GetVisibleBarFrames()
     local found = {}
+    if not EnumerateFrames then return found end
 
-    local function safeGetChildren(f)
-        if not f then return {} end
-        local children
-        local ok = pcall(function() children = {f:GetChildren()} end)
-        return (ok and children) or {}
-    end
+    -- Instead of looking for frames that CONTAIN action buttons, scan every frame
+    -- to find frames that ARE action buttons (.action slot field present).
+    -- Grouping buttons by bar ID then taking GetParent() gives us the bar frame
+    -- without any depth limit or container-visibility assumptions.
+    local barButtons = {}   -- barId -> list of button frames
 
-    -- Returns barId (1-8) if the frame has ≥2 action-button children with valid
-    -- slot numbers AND at least 1 button is visible; otherwise nil.
-    -- Checking button visibility (rather than parent frame visibility) is more
-    -- reliable: some addons hide the container frame but still show the buttons.
-    local function GetFrameBarId(frame)
-        if not frame then return nil end
-        local children = safeGetChildren(frame)
-        local count, visCount, barId = 0, 0, nil
-        for _, child in ipairs(children) do
-            local slot = child and child.action
-            if type(slot) == "number" and slot >= 1 and slot <= 96 then
-                count = count + 1
-                if not barId then barId = math.ceil(slot / 12) end
-                local ok, shown = pcall(function() return child:IsShown() end)
-                if ok and shown then visCount = visCount + 1 end
+    local f = EnumerateFrames()
+    while f do
+        local slot
+        -- Field access on userdata frames can error on some proxy types.
+        pcall(function() slot = f.action end)
+        if type(slot) == "number" and slot >= 1 and slot <= 96 then
+            local ok, shown = pcall(function() return f:IsShown() end)
+            if ok and shown then
+                local barId = math.ceil(slot / 12)
+                if not barButtons[barId] then barButtons[barId] = {} end
+                table.insert(barButtons[barId], f)
             end
         end
-        if count >= 2 and visCount >= 1 then return barId end
-        return nil
+        f = EnumerateFrames(f)
     end
 
-    -- EnumerateFrames walks every created frame globally — no depth limit and no
-    -- reliance on UIParent child ordering. This catches bars inside hidden
-    -- container frames (common in ElvUI / Bartender4 / Dominos).
-    if EnumerateFrames then
-        local frame = EnumerateFrames()
-        while frame do
-            local bid = GetFrameBarId(frame)
-            if bid and bid >= 1 and bid <= 8 and not found[bid] then
-                found[bid] = frame
+    -- Require ≥2 visible buttons so we don't pick up stray buttons.
+    -- Use the first button's parent as the representative bar frame.
+    for barId, buttons in pairs(barButtons) do
+        if barId >= 1 and barId <= 8 and #buttons >= 2 then
+            local ok, parent = pcall(function() return buttons[1]:GetParent() end)
+            if ok and parent then
+                found[barId] = parent
             end
-            frame = EnumerateFrames(frame)
         end
     end
 
@@ -138,14 +130,33 @@ end
 -- PickupSpellBookItem was removed in Midnight 12.0; use C_SpellBook variant or
 -- the direct PickupSpell(spellID) global when available.
 local function PickupSpellByID(spellID)
-    -- C_Spell.PickupSpell is the preferred 12.0 API; PickupSpell is the legacy fallback.
+    -- Preferred path: direct spell pickup by ID.
     local directFn = (C_Spell and C_Spell.PickupSpell) or PickupSpell
     if directFn then
         directFn(spellID)
         if GetCursorInfo() then return true end
         ClearCursor()
     end
-    -- Last resort: iterate spellbook and use C_SpellBook.PickupSpellBookItem.
+
+    -- Mount spells live in the Mount Journal, not the spellbook. Search by
+    -- matching spellID, then pick up with C_MountJournal.Pickup(mountID).
+    if C_MountJournal and C_MountJournal.GetMountIDs and C_MountJournal.Pickup then
+        for _, mountID in ipairs(C_MountJournal.GetMountIDs()) do
+            local ok, a, b = pcall(C_MountJournal.GetMountInfoByID, mountID)
+            if ok then
+                -- GetMountInfoByID: returns table in some versions, (name, spellID, …) in others.
+                local mountSpellID = (type(a) == "table" and a.spellID) or b
+                if mountSpellID == spellID then
+                    pcall(C_MountJournal.Pickup, mountID)
+                    if GetCursorInfo() then return true end
+                    ClearCursor()
+                    break
+                end
+            end
+        end
+    end
+
+    -- Last resort: iterate spellbook.
     local pickupFn = (C_SpellBook and C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
     if not pickupFn then return false end
     local i = 1
