@@ -69,7 +69,7 @@ function ABS:GetVisibleBarFrames()
     -- Walk UIParent's visible children and one level of sub-frames.
     -- Action bars are almost always within 2 levels of UIParent.
     for _, topFrame in ipairs({UIParent:GetChildren()}) do
-        if topFrame:IsShown() then
+        if topFrame and topFrame.IsShown and topFrame:IsShown() then
             local bid = GetFrameBarId(topFrame)
             if bid and bid >= 1 and bid <= 8 and not found[bid] then
                 found[bid] = topFrame
@@ -77,7 +77,7 @@ function ABS:GetVisibleBarFrames()
                 -- Check one level deeper (e.g. a bar inside a container frame)
                 if topFrame.GetChildren then
                     for _, sub in ipairs({topFrame:GetChildren()}) do
-                        if sub:IsShown() then
+                        if sub and sub.IsShown and sub:IsShown() then
                             local sbid = GetFrameBarId(sub)
                             if sbid and sbid >= 1 and sbid <= 8 and not found[sbid] then
                                 found[sbid] = sub
