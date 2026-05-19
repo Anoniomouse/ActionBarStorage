@@ -1,8 +1,6 @@
 package-as: ActionBarStorage
 
-# Set this to your numeric CurseForge project ID after creating the project.
-# Find it in the project URL: https://www.curseforge.com/wow/addons/<slug>/files
-# curse-id: 0
+curse-id: 1547500
 
 enable-nolib-creation: no
 
