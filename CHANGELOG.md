@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.1] - 2026-05-19
+
+### Fixed
+- Selector dialog instruction text no longer overflows the panel edge
+
 ## [1.0.0] - 2026-05-18
 
 ### Added
