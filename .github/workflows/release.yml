@@ -28,34 +28,44 @@ jobs:
           files: dist/ActionBarStorage-${{ github.ref_name }}.zip
           body_path: CHANGELOG.md
 
-      - name: Get CurseForge game version ID for 12.0.5
-        id: cf_version
-        run: |
-          VERSION_ID=$(curl -s "https://wow.curseforge.com/api/game/versions" \
-            -H "X-Api-Token: ${{ secrets.CF_API_KEY }}" \
-            | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          match = next((v for v in data if v.get('gameVersionTypeID') == 517 and '12.0' in v.get('name', '')), None)
-          print(match['id'] if match else '')
-          ")
-          echo "version_id=$VERSION_ID" >> $GITHUB_OUTPUT
-
       - name: Upload to CurseForge
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          METADATA=$(python3 -c "
-          import json, sys
-          meta = {
-            'changelog': open('CHANGELOG.md').read(),
-            'changelogType': 'markdown',
-            'displayName': '${{ github.ref_name }}',
-            'gameVersions': [${{ steps.cf_version.outputs.version_id }}],
-            'releaseType': 'release'
-          }
-          print(json.dumps(meta))
-          ")
-          curl -s \
-            -H "X-Api-Token: ${{ secrets.CF_API_KEY }}" \
-            -F "metadata=$METADATA" \
-            -F "file=@dist/ActionBarStorage-${{ github.ref_name }}.zip" \
-            "https://wow.curseforge.com/api/projects/1547500/upload-file"
+          # Fetch available game versions and find WoW 12.0.x
+          CF_VERSIONS=$(curl -s "https://wow.curseforge.com/api/game/versions" \
+            -H "X-Api-Token: $CF_API_KEY")
+          echo "Available versions containing '12.': $(echo "$CF_VERSIONS" | python3 -c "
+import sys,json
+data=json.load(sys.stdin)
+[print(v) for v in data if '12.' in v.get('name','')]
+" 2>/dev/null || echo 'parse error')"
+
+          export GAME_VER_ID=$(echo "$CF_VERSIONS" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+match = next((v for v in data if '12.0' in v.get('name', '')), None)
+print(match['id'] if match else 0)
+")
+          echo "Using game version ID: $GAME_VER_ID"
+
+          # Write metadata to file — avoids all shell quoting / newline issues
+          python3 -c "
+import json, os
+meta = {
+    'changelog':     open('CHANGELOG.md').read(),
+    'changelogType': 'markdown',
+    'displayName':   os.environ['REF_NAME'],
+    'gameVersions':  [int(os.environ['GAME_VER_ID'])],
+    'releaseType':   'release'
+}
+open('/tmp/cf_meta.json', 'w').write(json.dumps(meta))
+"
+          # Upload — curl reads metadata from file; < is curl syntax, not a shell redirect
+          RESPONSE=$(curl -s \
+            -H "X-Api-Token: $CF_API_KEY" \
+            -F "metadata=</tmp/cf_meta.json" \
+            -F "file=@dist/ActionBarStorage-${REF_NAME}.zip" \
+            "https://wow.curseforge.com/api/projects/1547500/upload-file")
+          echo "CurseForge response: $RESPONSE"
