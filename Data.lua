@@ -62,9 +62,33 @@ end
 -- because all WoW action buttons store their slot number in the .action field.
 -- We require at least 2 action-button children before accepting a frame as a bar,
 -- to avoid false positives from stray buttons.
+-- Returns true if a frame belongs to an override/vehicle/possess bar system
+-- that temporarily replaces regular bar content.
+local function IsOverrideFrame(f)
+    local function nameIsOverride(n)
+        return n:find("Override") or n:find("Vehicle")
+            or n:find("Possess")  or n:find("PetBattle") or n:find("MultiCast")
+    end
+    local ok, n = pcall(function() return f:GetName() end)
+    if ok and n and nameIsOverride(n) then return true end
+    local ok2, parent = pcall(function() return f:GetParent() end)
+    if ok2 and parent then
+        local ok3, pn = pcall(function() return parent:GetName() end)
+        if ok3 and pn and nameIsOverride(pn) then return true end
+    end
+    return false
+end
+
 function ABS:GetVisibleBarFrames()
     local found = {}
     if not EnumerateFrames then return found end
+
+    -- When the override/vehicle action bar is active, bar 1's slot data reflects
+    -- the temporary override actions, not the character's stored spells. Exclude
+    -- bar 1 from the selectable set so users can't accidentally capture it.
+    local overrideActive = (HasOverrideActionBar and HasOverrideActionBar())
+                        or (HasVehicleActionBar  and HasVehicleActionBar())
+                        or (HasPetBattleActionBar and HasPetBattleActionBar())
 
     -- Instead of looking for frames that CONTAIN action buttons, scan every frame
     -- to find frames that ARE action buttons (.action slot field present).
@@ -79,7 +103,7 @@ function ABS:GetVisibleBarFrames()
         pcall(function() slot = f.action end)
         if type(slot) == "number" and slot >= 1 and slot <= MAX_SLOT then
             local ok, shown = pcall(function() return f:IsShown() end)
-            if ok and shown then
+            if ok and shown and not IsOverrideFrame(f) then
                 local barId = math.ceil(slot / 12)
                 if not barButtons[barId] then barButtons[barId] = {} end
                 table.insert(barButtons[barId], f)
@@ -91,7 +115,8 @@ function ABS:GetVisibleBarFrames()
     -- Require ≥2 visible buttons so we don't pick up stray buttons.
     -- Use the first button's parent as the representative bar frame.
     for barId, buttons in pairs(barButtons) do
-        if barId >= 1 and barId <= MAX_BAR and #buttons >= 2 then
+        local skip = (barId == 1 and overrideActive)
+        if not skip and barId >= 1 and barId <= MAX_BAR and #buttons >= 2 then
             local ok, parent = pcall(function() return buttons[1]:GetParent() end)
             if ok and parent then
                 found[barId] = parent
@@ -118,7 +143,13 @@ function ABS:ReadBar(barId)
             name    = info and info.name or ("Spell " .. id)
             texture = C_Spell.GetSpellTexture(id)
         elseif actionType == "macro" and id then
+            -- GetActionText reads the macro name straight from the action slot.
+            -- This works even when GetMacroInfo's expected index ≠ the id returned
+            -- by GetActionInfo (a Midnight 12.0 API discrepancy).
+            local slotText = GetActionText and GetActionText(slot)
             local mname, micon = GetMacroInfo(id)
+            if slotText and slotText ~= "" then mname = slotText end
+            if not micon then micon = GetActionTexture and GetActionTexture(slot) end
             name    = mname or ("Macro " .. id)
             texture = micon
         elseif actionType == "item" and id then
@@ -186,7 +217,8 @@ end
 
 -- Pick up a spell onto the cursor by spellID.
 -- Mounts use actionType "summonmount" (Midnight 12.0+) or "companion" and are handled separately.
-local function PickupSpellByID(spellID)
+-- spellName is used as a last-resort fallback for spec-switched spells whose ID changed.
+local function PickupSpellByID(spellID, spellName)
     -- Preferred path: direct pickup by ID (Midnight 12.0+).
     local directFn = (C_Spell and C_Spell.PickupSpell) or PickupSpell
     if directFn then
@@ -195,24 +227,39 @@ local function PickupSpellByID(spellID)
         ClearCursor()
     end
 
-    -- Fallback: iterate spellbook (handles edge cases where direct pickup fails).
     local pickupFn = (C_SpellBook and C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
     if not pickupFn then return false end
-    local i = 1
-    while true do
-        local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
-        if not info then break end
-        if info.spellID == spellID then
-            pickupFn(i, Enum.SpellBookSpellBank.Player)
-            return true
+
+    -- Pass 1: match by spellID (exact).
+    -- Pass 2: match by spell name (handles spec variants with different IDs).
+    local nameLo = spellName and spellName ~= "" and spellName:lower() or nil
+    for pass = 1, (nameLo and 2 or 1) do
+        local i = 1
+        while true do
+            local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+            if not info then break end
+            local match = false
+            if pass == 1 then
+                match = (info.spellID == spellID)
+            else
+                local si = info.spellID and C_Spell.GetSpellInfo(info.spellID)
+                match = si and si.name and si.name:lower() == nameLo
+            end
+            if match then
+                pickupFn(i, Enum.SpellBookSpellBank.Player)
+                if GetCursorInfo() then return true end
+                ClearCursor()
+            end
+            i = i + 1
         end
-        i = i + 1
     end
     return false
 end
 
--- Write saved slot data to a target bar (out-of-combat only)
-function ABS:WriteBar(targetBarId, slots)
+-- Write saved slot data to a target bar (out-of-combat only).
+-- failures: optional table; skipped non-empty slots are appended as
+--   { barLabel, slot, name, actionType, reason }
+function ABS:WriteBar(targetBarId, slots, failures)
     if InCombatLockdown() then
         print("|cffFF4444[Action Bar Storage]|r Cannot apply while in combat.")
         return false
@@ -234,7 +281,7 @@ function ABS:WriteBar(targetBarId, slots)
         local picked = false
 
         if sd.actionType == "spell" and sd.id then
-            picked = PickupSpellByID(sd.id)
+            picked = PickupSpellByID(sd.id, sd.name)
         elseif sd.actionType == "flyout" and sd.id then
             -- Search spellbook for the flyout entry matching this flyoutID.
             -- itemType may be the string "FLYOUT" or Enum.SpellBookItemType.Flyout (a number).
@@ -258,10 +305,40 @@ function ABS:WriteBar(targetBarId, slots)
                 end
             end
         elseif sd.actionType == "macro" then
-            local lookupKey = (sd.name and sd.name ~= "") and sd.name or sd.id
-            if lookupKey then
-                PickupMacro(lookupKey)
+            local mname = (sd.name and sd.name ~= "") and sd.name or nil
+            -- 1. Direct name lookup
+            if mname then
+                PickupMacro(mname)
                 picked = GetCursorInfo() ~= nil
+                if not picked then ClearCursor() end
+            end
+            -- 2. Case-insensitive full scan (general macros then character macros)
+            if not picked and mname then
+                local numG, numC = GetNumMacros()
+                local charBase = MAX_ACCOUNT_MACROS or 120
+                local lo = mname:lower()
+                for pass = 1, 2 do
+                    local iStart = (pass == 1) and 1           or (charBase + 1)
+                    local iEnd   = (pass == 1) and (numG or 0) or (charBase + (numC or 0))
+                    for idx = iStart, iEnd do
+                        local n = GetMacroInfo(idx)
+                        if n and n:lower() == lo then
+                            PickupMacro(idx)
+                            picked = GetCursorInfo() ~= nil
+                            if picked then break end
+                            ClearCursor()
+                        end
+                    end
+                    if picked then break end
+                end
+            end
+            -- 3. Index fallback: try the saved index directly.
+            -- This handles macros where the name wasn't resolved at save time ("Macro N").
+            -- PickupMacro silently no-ops if the index is empty, so no wrong-macro risk.
+            if not picked and sd.id then
+                PickupMacro(sd.id)
+                picked = GetCursorInfo() ~= nil
+                if not picked then ClearCursor() end
             end
         elseif sd.actionType == "item" and sd.id then
             PickupItem(sd.id)
@@ -302,6 +379,23 @@ function ABS:WriteBar(targetBarId, slots)
 
         if picked then
             PlaceAction(targetSlot)
+        elseif failures and sd.actionType ~= "" and sd.id then
+            local reason
+            if     sd.actionType == "spell"  then reason = "spell not learned / wrong class"
+            elseif sd.actionType == "macro"  then reason = "macro not found on this character"
+            elseif sd.actionType == "item"   then reason = "item not in bags"
+            elseif sd.actionType == "flyout" then reason = "flyout not available"
+            else                                  reason = "not available"
+            end
+            local dname = (sd.name and sd.name ~= "") and sd.name
+                          or (sd.actionType .. " #" .. tostring(sd.id))
+            table.insert(failures, {
+                barLabel   = barDef.label,
+                slot       = i,
+                name       = dname,
+                actionType = sd.actionType,
+                reason     = reason,
+            })
         end
         ClearCursor()
     end
@@ -329,8 +423,9 @@ function ABS:SaveProfile(profileName, barIds)
     return profile
 end
 
--- Apply a profile; targetMap optionally remaps {[savedBarId] = destinationBarId}
-function ABS:ApplyProfile(profileName, targetMap)
+-- Apply a profile; targetMap optionally remaps {[savedBarId] = destinationBarId}.
+-- barFilter: optional set {[barId]=true} — only those bars are written.
+function ABS:ApplyProfile(profileName, targetMap, barFilter)
     if InCombatLockdown() then
         print("|cffFF4444[Action Bar Storage]|r Cannot apply while in combat.")
         return false
@@ -338,14 +433,28 @@ function ABS:ApplyProfile(profileName, targetMap)
     local profile = self.db.profiles[profileName]
     if not profile then return false end
 
-    local count = 0
+    local PRE      = "|cff00ccff[Action Bar Storage]|r"
+    local failures = {}
+    local count    = 0
     for barId, barData in pairs(profile.bars) do
-        local dest = (targetMap and targetMap[barId]) or barId
-        if self:WriteBar(dest, barData.slots) then
-            count = count + 1
+        if not barFilter or barFilter[barId] then
+            local dest = (targetMap and targetMap[barId]) or barId
+            if self:WriteBar(dest, barData.slots, failures) then
+                count = count + 1
+            end
         end
     end
-    print("|cff00ccff[Action Bar Storage]|r Applied \"" .. profileName .. "\" (" .. count .. " bar(s)).")
+
+    if #failures == 0 then
+        print(PRE .. " Applied \"" .. profileName .. "\" (" .. count .. " bar(s)) — all slots restored.")
+    else
+        print(PRE .. " Applied \"" .. profileName .. "\" (" .. count .. " bar(s)) — "
+              .. #failures .. " slot(s) skipped:")
+        for _, f in ipairs(failures) do
+            print(string.format("  |cffFF8844%s  slot %d|r  %s  |cff666677(%s)|r",
+                f.barLabel, f.slot, f.name, f.reason))
+        end
+    end
     return true
 end
 
@@ -371,4 +480,109 @@ function ABS:GetSortedProfiles()
     end
     table.sort(list)
     return list
+end
+
+-- Serialize a profile to a shareable import string.
+function ABS:ExportProfile(profileName)
+    local p = self.db.profiles[profileName]
+    if not p then return nil end
+
+    -- esc: strip | to prevent WoW chat corruption; ~ is the field separator
+    -- so it must also be stripped.
+    local esc = function(s) return (s or ""):gsub("[|~]", " ") end
+    local lines = {
+        "---ABS EXPORT---",
+        -- Use ~ so WoW escape sequences like |r, |c, |R never corrupt field boundaries.
+        "N~" .. esc(p.name or profileName),
+        "A~" .. esc(p.savedBy or ""),
+        "D~" .. esc(p.savedOn  or ""),
+    }
+    for barId = 1, #self.BARS do
+        local bd = p.bars[barId]
+        if bd then
+            table.insert(lines, "B~" .. barId .. "~" .. esc(bd.label))
+            for si, sd in ipairs(bd.slots) do
+                table.insert(lines, table.concat({
+                    "S", si,
+                    esc(sd.actionType),
+                    tostring(sd.id or ""),
+                    esc(sd.subType or ""),
+                    esc(sd.name),
+                }, "~"))
+            end
+        end
+    end
+    table.insert(lines, "---END---")
+    return table.concat(lines, "\n")
+end
+
+-- Parse an export string and store it as a new profile.
+-- Returns (profileName, nil) on success, (nil, errorMsg) on failure.
+-- If a profile with the same name already exists, a numeric suffix is appended.
+function ABS:ImportProfile(str)
+    -- Strip Windows carriage returns so \r\n doesn't corrupt field parsing.
+    if str then str = str:gsub("\r", "") end
+    -- Use plain find so we don't fight Lua's "." not matching newlines.
+    local s = str and str:find("---ABS EXPORT---", 1, true)
+    local e = str and str:find("---END---",        1, true)
+    if not s or not e or e <= s then return nil, "No valid ABS export block found." end
+    local block = str:sub(s + #"---ABS EXPORT---", e - 1)
+
+    local profile = { bars = {} }
+    local curBarId = nil
+
+    for line in (block .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:match("^%s*(.-)%s*$")
+        if line ~= "" then
+            -- New exports use ~ as field separator; old exports use |.
+            -- Detect by whether the line contains ~ before the first |.
+            local sep   = (line:find("~", 1, true) and "~") or "|"
+            local pat   = sep == "~" and "([^~]*)~" or "([^|]*)|"
+            local p = {}
+            for f in (line .. sep):gmatch(pat) do
+                table.insert(p, f)
+            end
+            local cmd = p[1]
+            if     cmd == "N" then profile.name    = p[2] or ""
+            elseif cmd == "A" then profile.savedBy = p[2] or ""
+            elseif cmd == "D" then profile.savedOn = p[2] or ""
+            elseif cmd == "B" then
+                curBarId = tonumber(p[2])
+                if curBarId then
+                    local def = self.BARS[curBarId]
+                    profile.bars[curBarId] = {
+                        label = (p[3] and p[3] ~= "" and p[3]) or (def and def.label) or ("Bar " .. curBarId),
+                        slots = {},
+                    }
+                end
+            elseif cmd == "S" and curBarId then
+                local idx = tonumber(p[2])
+                if idx then
+                    profile.bars[curBarId].slots[idx] = {
+                        actionType = p[3] or "",
+                        id         = tonumber(p[4]),
+                        subType    = (p[5] and p[5] ~= "" and p[5]) or nil,
+                        name       = p[6] or "",
+                        texture    = nil,
+                    }
+                end
+            end
+        end
+    end
+
+    if not profile.name or profile.name == "" then
+        return nil, "Export is missing the profile name."
+    end
+
+    -- Ensure unique name
+    local finalName = profile.name
+    if self.db.profiles[finalName] then
+        local i = 2
+        while self.db.profiles[finalName .. " (" .. i .. ")"] do i = i + 1 end
+        finalName = finalName .. " (" .. i .. ")"
+        profile.name = finalName
+    end
+
+    self.db.profiles[finalName] = profile
+    return finalName, nil
 end

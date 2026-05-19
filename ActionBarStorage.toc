@@ -5,6 +5,12 @@
 ## Version: 1.0.0
 ## SavedVariables: ActionBarStorageDB
 
+## X-License: MIT
+## X-Website: https://github.com/Anoniomouse/ActionBarStorage
+## X-Localizations: enUS
+
+## X-Curse-Project-ID: 0
+
 Core.lua
 Data.lua
 UI.lua
