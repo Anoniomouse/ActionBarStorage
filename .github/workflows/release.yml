@@ -11,13 +11,51 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Package and publish
-        uses: BigWigs/packager@release
-        env:
-          CF_API_KEY: ${{ secrets.CF_API_KEY }}
-          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build zip
+        run: |
+          mkdir -p dist/ActionBarStorage
+          cp Core.lua Data.lua UI.lua ActionBarStorage.toc LICENSE CHANGELOG.md dist/ActionBarStorage/
+          cd dist
+          zip -r ActionBarStorage-${{ github.ref_name }}.zip ActionBarStorage/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ActionBarStorage-${{ github.ref_name }}.zip
+          body_path: CHANGELOG.md
+
+      - name: Get CurseForge game version ID for 12.0.5
+        id: cf_version
+        run: |
+          VERSION_ID=$(curl -s "https://wow.curseforge.com/api/game/versions" \
+            -H "X-Api-Token: ${{ secrets.CF_API_KEY }}" \
+            | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          match = next((v for v in data if v.get('gameVersionTypeID') == 517 and '12.0' in v.get('name', '')), None)
+          print(match['id'] if match else '')
+          ")
+          echo "version_id=$VERSION_ID" >> $GITHUB_OUTPUT
+
+      - name: Upload to CurseForge
+        run: |
+          METADATA=$(python3 -c "
+          import json, sys
+          meta = {
+            'changelog': open('CHANGELOG.md').read(),
+            'changelogType': 'markdown',
+            'displayName': '${{ github.ref_name }}',
+            'gameVersions': [${{ steps.cf_version.outputs.version_id }}],
+            'releaseType': 'release'
+          }
+          print(json.dumps(meta))
+          ")
+          curl -s \
+            -H "X-Api-Token: ${{ secrets.CF_API_KEY }}" \
+            -F "metadata=$METADATA" \
+            -F "file=@dist/ActionBarStorage-${{ github.ref_name }}.zip" \
+            "https://wow.curseforge.com/api/projects/1547500/upload-file"
