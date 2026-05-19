@@ -129,8 +129,11 @@ local function RenderDetail(profileName)
             for slotIdx, sd in ipairs(bd.slots) do
                 if sd.actionType ~= "" and sd.id then
                     local colorCode = "|cffffffff"
-                    if sd.actionType == "macro" then colorCode = "|cffaaaaff" end
-                    if sd.actionType == "item"  then colorCode = "|cffffcc55" end
+                    if sd.actionType == "macro"      then colorCode = "|cffaaaaff" end
+                    if sd.actionType == "item"       then colorCode = "|cffffcc55" end
+                    if sd.actionType == "flyout"     then colorCode = "|cffcc88ff" end
+                    if sd.actionType == "summonmount"
+                    or sd.actionType == "companion"  then colorCode = "|cff88ddff" end
                     local displayName = (sd.name and sd.name ~= "") and sd.name
                                         or (sd.actionType .. " #" .. sd.id)
                     table.insert(lines, string.format("   %2d: %s%s|r", slotIdx, colorCode, displayName))

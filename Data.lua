@@ -126,6 +126,51 @@ function ABS:ReadBar(barId)
             local iname, _, _, _, _, _, _, _, _, itex = C_Item.GetItemInfo(id)
             name    = iname or ("Item #" .. id)
             texture = itex
+        elseif actionType == "flyout" and id then
+            -- GetFlyoutInfo returns name, description, numSlots, isKnown
+            local ok, fname = pcall(GetFlyoutInfo, id)
+            if ok and fname and fname ~= "" then
+                name = fname
+            else
+                -- Midnight may have moved this into C_SpellBook
+                if C_SpellBook and C_SpellBook.GetFlyoutInfo then
+                    local ok2, finfo = pcall(C_SpellBook.GetFlyoutInfo, id)
+                    if ok2 and finfo then
+                        name = (type(finfo) == "table" and finfo.name) or tostring(finfo)
+                    end
+                end
+                if name == "" then name = "Flyout #" .. id end
+            end
+        elseif (actionType == "companion" and subType == "MOUNT" and id)
+            or (actionType == "summonmount" and id) then
+            -- "companion"/"MOUNT" is the pre-Midnight type; "summonmount" is Midnight 12.0+.
+            -- id may be a mountID or a spellID depending on the version; try both.
+            local resolved = false
+            if C_MountJournal and C_MountJournal.GetMountInfoByID then
+                local ok, a, _, c = pcall(C_MountJournal.GetMountInfoByID, id)
+                if ok and a and a ~= "" then
+                    if type(a) == "table" then
+                        name    = a.name or ""
+                        texture = a.icon
+                    else
+                        name    = tostring(a)
+                        texture = c
+                    end
+                    resolved = (name ~= "")
+                end
+            end
+            if not resolved then
+                -- Fallback: treat id as a spellID (e.g. mount summon spell)
+                if C_Spell and C_Spell.GetSpellInfo then
+                    local info = C_Spell.GetSpellInfo(id)
+                    if info and info.name then
+                        name    = info.name
+                        texture = C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)
+                        resolved = true
+                    end
+                end
+            end
+            if not resolved or name == "" then name = "Mount #" .. id end
         end
 
         slots[i + 1] = {
@@ -139,11 +184,10 @@ function ABS:ReadBar(barId)
     return slots
 end
 
--- Find a spell in the player spellbook by spellID and pick it up onto the cursor.
--- PickupSpellBookItem was removed in Midnight 12.0; use C_SpellBook variant or
--- the direct PickupSpell(spellID) global when available.
+-- Pick up a spell onto the cursor by spellID.
+-- Mounts use actionType "summonmount" (Midnight 12.0+) or "companion" and are handled separately.
 local function PickupSpellByID(spellID)
-    -- Preferred path: direct spell pickup by ID.
+    -- Preferred path: direct pickup by ID (Midnight 12.0+).
     local directFn = (C_Spell and C_Spell.PickupSpell) or PickupSpell
     if directFn then
         directFn(spellID)
@@ -151,46 +195,7 @@ local function PickupSpellByID(spellID)
         ClearCursor()
     end
 
-    -- Mount spells live in the Mount Journal, not in the spellbook.
-    if C_MountJournal then
-        -- Special case: "Summon Random Favorite Mount" is not in GetMountIDs().
-        -- Identify it via GetSummonRandomFavoriteMountSpell() and pick it up
-        -- with PickupSummonRandomFavoriteMount() or Pickup(0) as a fallback.
-        local getRandomFn = C_MountJournal.GetSummonRandomFavoriteMountSpell
-        if getRandomFn then
-            local randomSpellID = getRandomFn()
-            if randomSpellID == spellID then
-                pcall(function()
-                    if C_MountJournal.PickupSummonRandomFavoriteMount then
-                        C_MountJournal.PickupSummonRandomFavoriteMount()
-                    else
-                        C_MountJournal.Pickup(0)
-                    end
-                end)
-                if GetCursorInfo() then return true end
-                ClearCursor()
-            end
-        end
-
-        -- Search all collected mounts by matching spell ID.
-        if C_MountJournal.GetMountIDs and C_MountJournal.Pickup then
-            for _, mountID in ipairs(C_MountJournal.GetMountIDs()) do
-                local ok, a, b = pcall(C_MountJournal.GetMountInfoByID, mountID)
-                if ok then
-                    -- Returns (name, spellID, …) as multiple values, or a table in 12.0+
-                    local mountSpellID = (type(a) == "table" and a.spellID) or b
-                    if mountSpellID == spellID then
-                        pcall(C_MountJournal.Pickup, mountID)
-                        if GetCursorInfo() then return true end
-                        ClearCursor()
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    -- Last resort: iterate spellbook.
+    -- Fallback: iterate spellbook (handles edge cases where direct pickup fails).
     local pickupFn = (C_SpellBook and C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
     if not pickupFn then return false end
     local i = 1
@@ -230,6 +235,28 @@ function ABS:WriteBar(targetBarId, slots)
 
         if sd.actionType == "spell" and sd.id then
             picked = PickupSpellByID(sd.id)
+        elseif sd.actionType == "flyout" and sd.id then
+            -- Search spellbook for the flyout entry matching this flyoutID.
+            -- itemType may be the string "FLYOUT" or Enum.SpellBookItemType.Flyout (a number).
+            -- The flyout ID may be in info.flyoutID or info.actionID depending on the version.
+            local pickupFn = (C_SpellBook and C_SpellBook.PickupSpellBookItem) or PickupSpellBookItem
+            if pickupFn and C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+                local enumFlyout = Enum.SpellBookItemType and Enum.SpellBookItemType.Flyout
+                local i = 1
+                while true do
+                    local info = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
+                    if not info then break end
+                    local isFlyout = info.itemType == "FLYOUT"
+                                  or (enumFlyout and info.itemType == enumFlyout)
+                    local matchId  = info.flyoutID == sd.id or info.actionID == sd.id
+                    if isFlyout and matchId then
+                        pcall(pickupFn, i, Enum.SpellBookSpellBank.Player)
+                        picked = GetCursorInfo() ~= nil
+                        break
+                    end
+                    i = i + 1
+                end
+            end
         elseif sd.actionType == "macro" then
             local lookupKey = (sd.name and sd.name ~= "") and sd.name or sd.id
             if lookupKey then
@@ -239,6 +266,38 @@ function ABS:WriteBar(targetBarId, slots)
         elseif sd.actionType == "item" and sd.id then
             PickupItem(sd.id)
             picked = GetCursorInfo() ~= nil
+        elseif (sd.actionType == "companion" or sd.actionType == "summonmount") and sd.id then
+            -- Try direct spell pickup first (works when id is a spellID in Midnight 12.0+).
+            local directFn = (C_Spell and C_Spell.PickupSpell) or PickupSpell
+            if directFn then
+                pcall(directFn, sd.id)
+                picked = GetCursorInfo() ~= nil
+                if not picked then ClearCursor() end
+            end
+            -- Fallback: search mount journal by display index (works when id is a mountID).
+            if not picked and C_MountJournal and C_MountJournal.Pickup then
+                local getNum = C_MountJournal.GetNumDisplayedMounts
+                local getID  = C_MountJournal.GetDisplayedMountID
+                if getNum and getID then
+                    local ok, n = pcall(getNum)
+                    if ok and n then
+                        for displayIdx = 1, n do
+                            local ok2, mountID = pcall(getID, displayIdx)
+                            if ok2 and mountID == sd.id then
+                                pcall(C_MountJournal.Pickup, displayIdx)
+                                picked = GetCursorInfo() ~= nil
+                                break
+                            end
+                        end
+                    end
+                end
+                -- Last resort: Summon Random Favorite Mount uses display index 0.
+                -- This runs when the id doesn't match any regular mount in the journal.
+                if not picked then
+                    pcall(C_MountJournal.Pickup, 0)
+                    picked = GetCursorInfo() ~= nil
+                end
+            end
         end
 
         if picked then
