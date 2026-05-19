@@ -19,8 +19,7 @@ jobs:
         run: |
           mkdir -p dist/ActionBarStorage
           cp Core.lua Data.lua UI.lua ActionBarStorage.toc LICENSE CHANGELOG.md dist/ActionBarStorage/
-          cd dist
-          zip -r ActionBarStorage-${{ github.ref_name }}.zip ActionBarStorage/
+          cd dist && zip -r ActionBarStorage-${{ github.ref_name }}.zip ActionBarStorage/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -31,28 +30,4 @@ jobs:
       - name: Upload to CurseForge
         env:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}
-        run: |
-          curl -s "https://wow.curseforge.com/api/game/versions" \
-            -H "X-Api-Token: $CF_API_KEY" > /tmp/cf_versions.json
-
-          python3 -c '
-import json, os
-versions = json.load(open("/tmp/cf_versions.json"))
-matches = [v for v in versions if "12." in v.get("name", "")]
-print("12.x versions found:", matches)
-match = next((v for v in versions if "12.0" in v.get("name", "")), None)
-print("Using:", match)
-with open("/tmp/cf_meta.json", "w") as f:
-    json.dump({
-        "changelog":     open("CHANGELOG.md").read(),
-        "changelogType": "markdown",
-        "displayName":   os.environ.get("GITHUB_REF_NAME", ""),
-        "gameVersions":  [match["id"]] if match else [],
-        "releaseType":   "release"
-    }, f)
-'
-          curl -s \
-            -H "X-Api-Token: $CF_API_KEY" \
-            -F "metadata=</tmp/cf_meta.json" \
-            -F "file=@dist/ActionBarStorage-${{ github.ref_name }}.zip" \
-            "https://wow.curseforge.com/api/projects/1547500/upload-file"
+        run: python3 .github/upload_to_curseforge.py
