@@ -1,8 +1,8 @@
-## Interface: 120005
+## Interface: 120007
 ## Title: Action Bar Storage
 ## Notes: Save and restore action bar layouts across characters and bars
 ## Author: ShawnAnston
-## Version: 1.0.1
+## Version: 1.0.2
 ## SavedVariables: ActionBarStorageDB
 
 ## X-License: MIT

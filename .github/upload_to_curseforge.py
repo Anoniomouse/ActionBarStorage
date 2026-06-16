@@ -18,7 +18,7 @@ with urllib.request.urlopen(req) as resp:
 wow12 = [v for v in versions if "12." in v.get("name", "")]
 print(f"12.x versions found: {wow12}")
 
-match = next((v for v in versions if v.get("name") == "12.0.5"), None)
+match = next((v for v in versions if v.get("name") == "12.0.7"), None)
 if not match:
     match = next((v for v in versions if v.get("name", "").startswith("12.0.")), None)
 if not match:
