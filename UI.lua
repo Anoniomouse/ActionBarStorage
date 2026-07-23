@@ -602,6 +602,55 @@ local function ReleaseApplyRows()
     applyActiveRows2 = {}
 end
 
+-- ── Bar-target dropdown (shared, lazily built) ────────────────────────────────
+local barDropdown
+local barDropdownCB
+
+local function ShowBarDropdown(anchor, callback)
+    if not barDropdown then
+        local ITEM_H = 18
+        local d = CreateFrame("Frame", "ABS_BarDropdown", UIParent)
+        d:SetWidth(178)
+        d:SetFrameStrata("TOOLTIP")
+        d:SetClampedToScreen(true)
+        d:Hide()
+        local bdr = d:CreateTexture(nil, "BACKGROUND", nil, -1)
+        bdr:SetAllPoints()
+        bdr:SetColorTexture(0.28, 0.30, 0.42, 1)
+        local bg = d:CreateTexture(nil, "BACKGROUND")
+        bg:SetPoint("TOPLEFT",     d, "TOPLEFT",     1, -1)
+        bg:SetPoint("BOTTOMRIGHT", d, "BOTTOMRIGHT", -1,  1)
+        bg:SetColorTexture(0.10, 0.11, 0.16, 1)
+        for i, def in ipairs(ABS.BARS) do
+            local btn = CreateFrame("Button", nil, d)
+            btn:SetHeight(ITEM_H)
+            btn:SetPoint("TOPLEFT",  d, "TOPLEFT",  1, -(1 + (i - 1) * ITEM_H))
+            btn:SetPoint("TOPRIGHT", d, "TOPRIGHT", -1, -(1 + (i - 1) * ITEM_H))
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 0.82, 0, 0.15)
+            local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            fs:SetPoint("LEFT",  btn, "LEFT",  6, 0)
+            fs:SetPoint("RIGHT", btn, "RIGHT", -4, 0)
+            fs:SetJustifyH("LEFT")
+            fs:SetTextColor(0.82, 0.84, 0.92, 1)
+            fs:SetText(def.label)
+            local capId = def.id
+            btn:SetScript("OnClick", function()
+                d:Hide()
+                if barDropdownCB then barDropdownCB(capId) end
+            end)
+        end
+        d:SetHeight(2 + #ABS.BARS * ITEM_H)
+        barDropdown = d
+    end
+    barDropdownCB = callback
+    barDropdown:ClearAllPoints()
+    barDropdown:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    barDropdown:SetFrameLevel(300)
+    barDropdown:Show()
+end
+
 local function GetApplyRow(parent)
     local r = table.remove(applyDialogRows)
     if not r then
@@ -611,25 +660,30 @@ local function GetApplyRow(parent)
         r.bgTex:SetAllPoints()
         r.check = MakeCheckbox(r)
         r.check:SetPoint("LEFT", r, "LEFT", 8, 0)
+        r.targetBtn = MakeBtn(r, 178, 20, "→")
+        r.targetBtn:SetPoint("RIGHT", r, "RIGHT", -6, 0)
         r.label = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        r.label:SetPoint("LEFT",  r.check, "RIGHT", 8, 0)
-        r.label:SetPoint("RIGHT", r,       "RIGHT", -60, 0)
+        r.label:SetPoint("LEFT",  r.check,     "RIGHT",  8, 0)
+        r.label:SetPoint("RIGHT", r.targetBtn, "LEFT",  -4, 0)
         r.label:SetJustifyH("LEFT")
         r.label:SetTextColor(0.82, 0.84, 0.92, 1)
-        r.badge = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        r.badge:SetPoint("RIGHT", r, "RIGHT", -8, 0)
-        r.badge:SetJustifyH("RIGHT")
-        r.badge:SetTextColor(0.45, 0.45, 0.55, 1)
-        -- clicking anywhere on the row toggles the checkbox
+        -- clicking the label area toggles the checkbox; targetBtn handles its own click
         local hit = CreateFrame("Button", nil, r)
-        hit:SetPoint("LEFT", r.check, "RIGHT", 0, 0)
-        hit:SetPoint("RIGHT",  r, "RIGHT",  0, 0)
+        hit:SetPoint("LEFT",   r.check,     "RIGHT", 0, 0)
+        hit:SetPoint("RIGHT",  r.targetBtn, "LEFT",  0, 0)
         hit:SetPoint("TOP",    r, "TOP",    0, 0)
         hit:SetPoint("BOTTOM", r, "BOTTOM", 0, 0)
         local rowHl = hit:CreateTexture(nil, "HIGHLIGHT")
         rowHl:SetAllPoints()
         rowHl:SetColorTexture(1, 1, 1, 0.04)
         hit:SetScript("OnClick", function() r.check:Click() end)
+        r.targetBtn:SetScript("OnClick", function()
+            ShowBarDropdown(r.targetBtn, function(newId)
+                r.targetBarId = newId
+                local nd = ABS.BARS[newId]
+                r.targetBtn:SetText("→ " .. (nd and nd.label or ("Bar " .. newId)))
+            end)
+        end)
     end
     r:Show()
     table.insert(applyActiveRows2, r)
@@ -638,7 +692,7 @@ end
 
 local function BuildApplyDialog()
     local d = CreateFrame("Frame", "ABS_ApplyDialog", UIParent)
-    d:SetSize(DLG_W, 340)
+    d:SetSize(460, 340)
     d:SetPoint("CENTER")
     d:SetMovable(true)
     d:EnableMouse(true)
@@ -691,9 +745,11 @@ local function BuildApplyDialog()
     d.body = body
 
     local instr = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    instr:SetPoint("TOPLEFT", body, "TOPLEFT", PAD, -PAD)
+    instr:SetPoint("TOPLEFT",  body, "TOPLEFT",  PAD,  -PAD)
+    instr:SetPoint("TOPRIGHT", body, "TOPRIGHT", -PAD, -PAD)
+    instr:SetJustifyH("LEFT")
     instr:SetTextColor(0.55, 0.55, 0.65, 1)
-    instr:SetText("Select bars to apply:")
+    instr:SetText("Select bars to restore; click → to remap to a different bar:")
     d.instr = instr
 
     -- Separator
@@ -711,7 +767,7 @@ local function BuildApplyDialog()
     d.scroll = scroll
 
     local child = CreateFrame("Frame", nil, scroll)
-    child:SetWidth(DLG_W - 2 - PAD * 2 - 16)
+    child:SetWidth(460 - 2 - PAD * 2 - 16)
     child:SetHeight(10)
     scroll:SetScrollChild(child)
     d.child = child
@@ -736,11 +792,13 @@ local function BuildApplyDialog()
     cancelBtn:SetScript("OnClick", function() d:Hide() end)
     applyBtn2:SetScript("OnClick", function()
         if not applyDialogProfile then return end
-        local filter = {}
+        local filter    = {}
+        local targetMap = {}
         local anySelected = false
         for _, r in ipairs(applyActiveRows2) do
             if r.check:IsChecked() then
-                filter[r.barId] = true
+                filter[r.barId]    = true
+                targetMap[r.barId] = r.targetBarId or r.barId
                 anySelected = true
             end
         end
@@ -749,7 +807,11 @@ local function BuildApplyDialog()
             return
         end
         d:Hide()
-        ABS:ApplyProfile(applyDialogProfile, nil, filter)
+        ABS:ApplyProfile(applyDialogProfile, targetMap, filter)
+    end)
+
+    d:SetScript("OnHide", function()
+        if barDropdown then barDropdown:Hide() end
     end)
 
     return d
@@ -785,9 +847,11 @@ local function ShowApplyDialog(profileName)
         r.barId = barId
         r:SetWidth(applyDialog.child:GetWidth())
         r:SetPoint("TOPLEFT", applyDialog.child, "TOPLEFT", 0, -yOff)
+        r.targetBarId = barId
         r.check:SetChecked(true)
         r.label:SetText(bd.label or ("Bar " .. barId))
-        r.badge:SetText(filled .. " / 12")
+        local tdef = ABS.BARS[barId]
+        r.targetBtn:SetText("→ " .. (tdef and tdef.label or ("Bar " .. barId)))
 
         local alt = (#applyActiveRows2 % 2 == 1)
         r.bgTex:SetColorTexture(alt and 0.11 or 0.09, alt and 0.11 or 0.09, alt and 0.15 or 0.12, 1)
