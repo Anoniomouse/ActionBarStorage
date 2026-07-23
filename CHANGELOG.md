@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.3] - 2026-07-23
+
+### Changed
+- Updated for patch 12.1
+
 ## [1.0.2] - 2026-06-16
 
 ### Changed

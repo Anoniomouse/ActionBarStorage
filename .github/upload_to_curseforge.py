@@ -18,9 +18,11 @@ with urllib.request.urlopen(req) as resp:
 wow12 = [v for v in versions if "12." in v.get("name", "")]
 print(f"12.x versions found: {wow12}")
 
-match = next((v for v in versions if v.get("name") == "12.0.7"), None)
+match = next((v for v in versions if v.get("name") == "12.1.0"), None)
 if not match:
-    match = next((v for v in versions if v.get("name", "").startswith("12.0.")), None)
+    match = next((v for v in versions if v.get("name", "").startswith("12.1.")), None)
+if not match:
+    match = next((v for v in versions if v.get("name", "").startswith("12.")), None)
 if not match:
     print("ERROR: No WoW 12.0.x version found. All versions:")
     for v in sorted(versions, key=lambda x: x.get("id", 0)):
