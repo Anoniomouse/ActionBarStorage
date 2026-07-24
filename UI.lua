@@ -660,7 +660,7 @@ local function GetApplyRow(parent)
         r.bgTex:SetAllPoints()
         r.check = MakeCheckbox(r)
         r.check:SetPoint("LEFT", r, "LEFT", 8, 0)
-        r.targetBtn = MakeBtn(r, 178, 20, "→")
+        r.targetBtn = MakeBtn(r, 178, 20, "->")
         r.targetBtn:SetPoint("RIGHT", r, "RIGHT", -6, 0)
         r.label = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         r.label:SetPoint("LEFT",  r.check,     "RIGHT",  8, 0)
@@ -681,7 +681,7 @@ local function GetApplyRow(parent)
             ShowBarDropdown(r.targetBtn, function(newId)
                 r.targetBarId = newId
                 local nd = ABS.BARS[newId]
-                r.targetBtn:SetText("→ " .. (nd and nd.label or ("Bar " .. newId)))
+                r.targetBtn:SetText("-> " .. (nd and nd.label or ("Bar " .. newId)))
             end)
         end)
     end
@@ -749,7 +749,7 @@ local function BuildApplyDialog()
     instr:SetPoint("TOPRIGHT", body, "TOPRIGHT", -PAD, -PAD)
     instr:SetJustifyH("LEFT")
     instr:SetTextColor(0.55, 0.55, 0.65, 1)
-    instr:SetText("Select bars to restore; click → to remap to a different bar:")
+    instr:SetText("Select bars to restore; click -> to remap to a different bar:")
     d.instr = instr
 
     -- Separator
@@ -851,7 +851,7 @@ local function ShowApplyDialog(profileName)
         r.check:SetChecked(true)
         r.label:SetText(bd.label or ("Bar " .. barId))
         local tdef = ABS.BARS[barId]
-        r.targetBtn:SetText("→ " .. (tdef and tdef.label or ("Bar " .. barId)))
+        r.targetBtn:SetText("-> " .. (tdef and tdef.label or ("Bar " .. barId)))
 
         local alt = (#applyActiveRows2 % 2 == 1)
         r.bgTex:SetColorTexture(alt and 0.11 or 0.09, alt and 0.11 or 0.09, alt and 0.15 or 0.12, 1)
