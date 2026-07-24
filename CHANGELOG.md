@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.6] - 2026-07-23
+
+### Fixed
+- Bar remap button now displays correctly; WoW font does not support Unicode arrows
+
 ## [1.0.5] - 2026-07-23
 
 ### Added
