@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.5] - 2026-07-23
+
+### Added
+- Bar remapping in apply dialog — click the → button on any bar to apply it to a different bar instead
+
 ## [1.0.4] - 2026-07-23
 
 ### Fixed
