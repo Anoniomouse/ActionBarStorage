@@ -99,8 +99,12 @@ function ABS:GetVisibleBarFrames()
     local f = EnumerateFrames()
     while f do
         local slot
-        -- Field access on userdata frames can error on some proxy types.
+        -- Try direct field first (addon bars like ElvUI/Bartender set frame.action).
         pcall(function() slot = f.action end)
+        -- Blizzard's default secure buttons store the slot as an attribute, not a field.
+        if not (type(slot) == "number" and slot >= 1 and slot <= MAX_SLOT) then
+            pcall(function() slot = tonumber(f:GetAttribute("action")) end)
+        end
         if type(slot) == "number" and slot >= 1 and slot <= MAX_SLOT then
             local ok, shown = pcall(function() return f:IsShown() end)
             if ok and shown and not IsOverrideFrame(f) then
@@ -118,8 +122,23 @@ function ABS:GetVisibleBarFrames()
         local skip = (barId == 1 and overrideActive)
         if not skip and barId >= 1 and barId <= MAX_BAR and #buttons >= 2 then
             local ok, parent = pcall(function() return buttons[1]:GetParent() end)
-            if ok and parent then
-                found[barId] = parent
+            if ok and parent then found[barId] = parent end
+        end
+    end
+
+    -- Fallback: for any bar still not found, check Blizzard's known frame names directly.
+    -- Covers cases where neither .action nor GetAttribute("action") is accessible.
+    for barId, candidates in pairs(self.BAR_FRAME_CANDIDATES) do
+        if not found[barId] then
+            local skip = (barId == 1 and overrideActive)
+            if not skip then
+                for _, name in ipairs(candidates) do
+                    local fr = _G[name]
+                    if fr and fr.IsShown and fr:IsShown() then
+                        found[barId] = fr
+                        break
+                    end
+                end
             end
         end
     end
