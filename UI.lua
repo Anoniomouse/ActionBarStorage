@@ -1096,214 +1096,149 @@ renameBtn:SetScript("OnClick", function()
     renameDialog:Show()
 end)
 
--- ── Bar selector ──────────────────────────────────────────────────────────────
-local sel = {
-    active    = false,
-    chosen    = {},
-    barFrames = {},
-    hoveredId = nil,
-    onDone    = nil,
-}
+-- ── Save-bar dialog ───────────────────────────────────────────────────────────
+-- Lists bars with at least one filled slot (read via GetActionInfo — no frame
+-- detection needed, works with any bar addon or Blizzard default bars).
+local saveBarDialog = nil
+local saveBarRows   = {}
+local saveBarActive = {}
+local saveBarCB     = nil
 
-local selHover = CreateFrame("Frame", nil, UIParent)
-selHover:SetFrameLevel(188)
-selHover:EnableMouse(false)
-selHover:Hide()
-do
-    local t = selHover:CreateTexture(nil, "OVERLAY")
-    t:SetAllPoints()
-    t:SetColorTexture(1, 0.82, 0, 0.3)
-    selHover.lbl = selHover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    selHover.lbl:SetPoint("CENTER")
-    selHover.lbl:SetTextColor(1, 1, 0, 1)
+local function ReleaseSaveBarRows()
+    for _, r in ipairs(saveBarActive) do
+        r:Hide()
+        r.check:SetChecked(false)
+        table.insert(saveBarRows, r)
+    end
+    saveBarActive = {}
 end
 
-local selGreen = {}
-local function GetGreenOverlay(barId)
-    if not selGreen[barId] then
-        local f = CreateFrame("Frame", nil, UIParent)
-        f:SetFrameLevel(187)
-        f:EnableMouse(false)
-        f:Hide()
-        local t = f:CreateTexture(nil, "OVERLAY")
-        t:SetAllPoints()
-        t:SetColorTexture(0.1, 0.9, 0.1, 0.3)
-        local lbl = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        lbl:SetPoint("CENTER")
-        lbl:SetText("|cff00ff00[Selected]|r")
-        selGreen[barId] = f
+local function GetSaveBarRow(parent)
+    local r = table.remove(saveBarRows)
+    if not r then
+        r = CreateFrame("Frame", nil, parent)
+        r:SetHeight(ROW_H)
+        r.bgTex = r:CreateTexture(nil, "BACKGROUND")
+        r.bgTex:SetAllPoints()
+        r.check = MakeCheckbox(r)
+        r.check:SetPoint("LEFT", r, "LEFT", 8, 0)
+        r.label = r:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        r.label:SetPoint("LEFT",  r.check, "RIGHT",  8, 0)
+        r.label:SetPoint("RIGHT", r,       "RIGHT", -60, 0)
+        r.label:SetJustifyH("LEFT")
+        r.label:SetTextColor(0.82, 0.84, 0.92, 1)
+        r.badge = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        r.badge:SetPoint("RIGHT", r, "RIGHT", -8, 0)
+        r.badge:SetJustifyH("RIGHT")
+        r.badge:SetTextColor(0.45, 0.45, 0.55, 1)
+        local hit = CreateFrame("Button", nil, r)
+        hit:SetPoint("LEFT",   r.check, "RIGHT", 0, 0)
+        hit:SetPoint("RIGHT",  r, "RIGHT",  0, 0)
+        hit:SetPoint("TOP",    r, "TOP",    0, 0)
+        hit:SetPoint("BOTTOM", r, "BOTTOM", 0, 0)
+        local hl = hit:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.04)
+        hit:SetScript("OnClick", function() r.check:Click() end)
     end
-    return selGreen[barId]
+    r:Show()
+    table.insert(saveBarActive, r)
+    return r
 end
 
-local selCatcher = CreateFrame("Frame", "ABS_SelCatcher", UIParent)
-selCatcher:SetAllPoints(UIParent)
-selCatcher:SetFrameLevel(189)
-selCatcher:EnableMouse(true)
-selCatcher:Hide()
-selCatcher:SetScript("OnMouseDown", function(_, button)
-    if not sel.active or button ~= "LeftButton" then return end
-    local barId = sel.hoveredId
-    if not barId then return end
-    local f = sel.barFrames[barId]
-    if not f then return end
-    if sel.chosen[barId] then
-        sel.chosen[barId] = nil
-        GetGreenOverlay(barId):Hide()
-    else
-        sel.chosen[barId] = true
-        GetGreenOverlay(barId):SetAllPoints(f)
-        GetGreenOverlay(barId):Show()
-    end
-end)
+local function ShowSaveBarDialog(title, onConfirm)
+    if not saveBarDialog then
+        local d = BuildDarkFrame("ABS_SaveBarDialog", DLG_W, 340)
+        local body = d.body
 
-local selScanner = CreateFrame("Frame", nil, UIParent)
-selScanner:Hide()
-selScanner:SetScript("OnUpdate", function()
-    if not sel.active then return end
-    local found = nil
-    for barId, frame in pairs(sel.barFrames) do
-        if frame:IsMouseOver() then found = barId; break end
+        local instr = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        instr:SetPoint("TOPLEFT",  body, "TOPLEFT",  PAD, -PAD)
+        instr:SetPoint("TOPRIGHT", body, "TOPRIGHT", -PAD, -PAD)
+        instr:SetJustifyH("LEFT")
+        instr:SetTextColor(0.55, 0.55, 0.65, 1)
+        instr:SetText("Select which bars to include in this profile:")
+
+        local sep = body:CreateTexture(nil, "ARTWORK")
+        sep:SetHeight(1)
+        sep:SetColorTexture(0.22, 0.22, 0.30, 1)
+        sep:SetPoint("TOPLEFT",  instr, "BOTTOMLEFT",  0, -6)
+        sep:SetPoint("TOPRIGHT", body,  "TOPRIGHT",   -PAD, -6)
+
+        local scroll = CreateFrame("ScrollFrame", nil, body, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT",     sep,  "BOTTOMLEFT",   0,      -4)
+        scroll:SetPoint("BOTTOMRIGHT", body, "BOTTOMRIGHT", -PAD - 16, 42)
+        local child = CreateFrame("Frame", nil, scroll)
+        child:SetWidth(DLG_W - 2 - PAD * 2 - 16)
+        child:SetHeight(10)
+        scroll:SetScrollChild(child)
+        d.child = child
+
+        local allBtn    = MakeBtn(body, 50, 24, "All")
+        local noneBtn   = MakeBtn(body, 50, 24, "None")
+        local saveBtn   = MakeBtn(body, 80, 24, "Save", true)
+        local cancelBtn = MakeBtn(body, 65, 24, "Cancel")
+        allBtn:SetPoint(   "BOTTOMLEFT",  body, "BOTTOMLEFT",  PAD, PAD)
+        noneBtn:SetPoint(  "LEFT", allBtn,   "RIGHT", 4, 0)
+        saveBtn:SetPoint(  "BOTTOMRIGHT", body, "BOTTOMRIGHT", -PAD, PAD)
+        cancelBtn:SetPoint("RIGHT", saveBtn, "LEFT", -4, 0)
+
+        allBtn:SetScript("OnClick",  function()
+            for _, r in ipairs(saveBarActive) do r.check:SetChecked(true) end
+        end)
+        noneBtn:SetScript("OnClick", function()
+            for _, r in ipairs(saveBarActive) do r.check:SetChecked(false) end
+        end)
+        cancelBtn:SetScript("OnClick", function() d:Hide() end)
+        saveBtn:SetScript("OnClick", function()
+            local ids = {}
+            for _, r in ipairs(saveBarActive) do
+                if r.check:IsChecked() then table.insert(ids, r.barId) end
+            end
+            if #ids == 0 then
+                print("|cffFF4444[Action Bar Storage]|r No bars selected.")
+                return
+            end
+            d:Hide()
+            if saveBarCB then saveBarCB(ids) end
+        end)
+
+        saveBarDialog = d
     end
-    if found ~= sel.hoveredId then
-        sel.hoveredId = found
-        if found then
-            local def = ABS.BARS[found]
-            selHover:SetAllPoints(sel.barFrames[found])
-            selHover.lbl:SetText(def and def.label or ("Bar " .. found))
-            selHover:Show()
-        else
-            selHover:Hide()
+
+    saveBarCB = onConfirm
+    saveBarDialog.titleText:SetText(title)
+    ReleaseSaveBarRows()
+
+    local yOff = 0
+    for barId = 1, #ABS.BARS do
+        local def = ABS.BARS[barId]
+        local count = 0
+        for i = 0, 11 do
+            local t, id = GetActionInfo(def.startSlot + i)
+            if t and t ~= "" and id then count = count + 1 end
+        end
+        if count > 0 then
+            local r = GetSaveBarRow(saveBarDialog.child)
+            r.barId = barId
+            r:SetWidth(saveBarDialog.child:GetWidth())
+            r:SetPoint("TOPLEFT", saveBarDialog.child, "TOPLEFT", 0, -yOff)
+            r.check:SetChecked(true)
+            r.label:SetText(def.label)
+            r.badge:SetText(count .. " / 12")
+            local alt = (#saveBarActive % 2 == 1)
+            r.bgTex:SetColorTexture(alt and 0.11 or 0.09, alt and 0.11 or 0.09, alt and 0.15 or 0.12, 1)
+            yOff = yOff + ROW_H
         end
     end
-end)
+    saveBarDialog.child:SetHeight(math.max(yOff, 10))
 
-local selPanel
-
-local function StopSelector()
-    sel.active    = false
-    sel.chosen    = {}
-    sel.hoveredId = nil
-    sel.barFrames = {}
-    selHover:Hide()
-    selCatcher:Hide()
-    selScanner:Hide()
-    for _, ov in pairs(selGreen) do ov:Hide() end
-    if selPanel then selPanel:Hide() end
-    main:Show()
-    RefreshList()
-end
-
-local function StartSelector(onDone)
-    sel.active    = true
-    sel.chosen    = {}
-    sel.hoveredId = nil
-    sel.onDone    = onDone
-    sel.barFrames = ABS:GetVisibleBarFrames()
-
-    if not next(sel.barFrames) then
-        print("|cffFF4444[Action Bar Storage]|r No action bar frames detected. Make sure your bars are visible.")
+    if #saveBarActive == 0 then
+        print("|cffFF4444[Action Bar Storage]|r No filled action bars found.")
         return
     end
 
-    selHover:Hide()
-    for _, ov in pairs(selGreen) do ov:Hide() end
-    selCatcher:Show()
-    selScanner:Show()
-    main:Hide()
-
-    if not selPanel then
-        local SP_TITLE_H = 26
-        selPanel = CreateFrame("Frame", "ABS_SelPanel", UIParent)
-        selPanel:SetSize(310, 104)
-        selPanel:SetPoint("TOP", UIParent, "TOP", 0, -60)
-        selPanel:SetMovable(true)
-        selPanel:EnableMouse(true)
-        selPanel:SetFrameStrata("FULLSCREEN_DIALOG")
-        selPanel:SetClampedToScreen(true)
-        Bg(selPanel, 0.20, 0.22, 0.30, 1)
-
-        local spTitle = CreateFrame("Frame", nil, selPanel)
-        spTitle:SetPoint("TOPLEFT",  selPanel, "TOPLEFT",  1, -1)
-        spTitle:SetPoint("TOPRIGHT", selPanel, "TOPRIGHT", -1, -1)
-        spTitle:SetHeight(SP_TITLE_H)
-        Bg(spTitle, 0.13, 0.14, 0.20, 1)
-        spTitle:EnableMouse(true)
-        spTitle:RegisterForDrag("LeftButton")
-        spTitle:SetScript("OnDragStart", function() selPanel:StartMoving() end)
-        spTitle:SetScript("OnDragStop",  function() selPanel:StopMovingOrSizing() end)
-
-        local spLine = spTitle:CreateTexture(nil, "ARTWORK")
-        spLine:SetHeight(1)
-        spLine:SetPoint("BOTTOMLEFT",  spTitle, "BOTTOMLEFT")
-        spLine:SetPoint("BOTTOMRIGHT", spTitle, "BOTTOMRIGHT")
-        spLine:SetColorTexture(1, 0.82, 0, 0.45)
-
-        local spTitleText = spTitle:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        spTitleText:SetPoint("LEFT", spTitle, "LEFT", 8, 0)
-        spTitleText:SetTextColor(0.88, 0.86, 0.80, 1)
-        spTitleText:SetText("Select Bars")
-
-        local spBody = CreateFrame("Frame", nil, selPanel)
-        spBody:SetPoint("TOPLEFT",     selPanel, "TOPLEFT",     1, -(SP_TITLE_H + 1))
-        spBody:SetPoint("BOTTOMRIGHT", selPanel, "BOTTOMRIGHT", -1, 1)
-        Bg(spBody, 0.10, 0.11, 0.15, 1)
-
-        local instr = spBody:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        instr:SetPoint("TOPLEFT",  spBody, "TOPLEFT",  8, -8)
-        instr:SetPoint("TOPRIGHT", spBody, "TOPRIGHT", -8, 0)
-        instr:SetText("Hover over a bar (turns yellow) and click\nto select it (turns green). Click again to deselect.")
-        instr:SetJustifyH("LEFT")
-        instr:SetTextColor(0.65, 0.65, 0.72, 1)
-        selPanel.instr = instr
-
-        local allBtn     = MakeBtn(spBody, 55, 22, "All")
-        local confirmBtn = MakeBtn(spBody, 70, 22, "Confirm", true)
-        local cancelBtn  = MakeBtn(spBody, 65, 22, "Cancel")
-        allBtn:SetPoint(    "BOTTOMLEFT",  spBody, "BOTTOMLEFT",  8, 8)
-        confirmBtn:SetPoint("LEFT", allBtn,    "RIGHT", 4, 0)
-        cancelBtn:SetPoint( "LEFT", confirmBtn,"RIGHT", 4, 0)
-
-        allBtn:SetScript("OnClick", function()
-            for barId, f in pairs(sel.barFrames) do
-                if not sel.chosen[barId] then
-                    sel.chosen[barId] = true
-                    GetGreenOverlay(barId):SetAllPoints(f)
-                    GetGreenOverlay(barId):Show()
-                end
-            end
-        end)
-
-        confirmBtn:SetScript("OnClick", function()
-            local ids = {}
-            for barId in pairs(sel.chosen) do table.insert(ids, barId) end
-            table.sort(ids)
-            local cb = sel.onDone
-            StopSelector()
-            if cb and #ids > 0 then
-                cb(ids)
-            else
-                print("|cffFF4444[Action Bar Storage]|r No bars selected — profile not saved.")
-            end
-        end)
-
-        cancelBtn:SetScript("OnClick", StopSelector)
-    end
-
-    selPanel:SetFrameLevel(200)
-    selPanel:Show()
-
-    -- Warn when the override/vehicle bar is active and bar 1 was excluded.
-    if selPanel.instr then
-        local overrideActive = (HasOverrideActionBar and HasOverrideActionBar())
-                            or (HasVehicleActionBar  and HasVehicleActionBar())
-                            or (HasPetBattleActionBar and HasPetBattleActionBar())
-        if overrideActive then
-            selPanel.instr:SetText("Hover a bar and click to select (turns green).\n|cffFF8844Main Bar hidden — dismount to save it.|r")
-        else
-            selPanel.instr:SetText("Hover over a bar (turns yellow) and click\nto select it (turns green). Click again to deselect.")
-        end
-    end
+    saveBarDialog:SetPoint("CENTER")
+    saveBarDialog:Show()
 end
 
 -- ── New profile flow ──────────────────────────────────────────────────────────
@@ -1323,7 +1258,7 @@ newErr:SetPoint("TOPLEFT", newWrap, "BOTTOMLEFT", 0, -4)
 newErr:SetTextColor(1, 0.3, 0.3, 1)
 newErr:SetText("")
 newDialog.err = newErr
-local newConfirm = MakeBtn(newDialog.body, 80, 24, "Next >>", true)
+local newConfirm = MakeBtn(newDialog.body, 80, 24, "Next", true)
 local newCancel  = MakeBtn(newDialog.body, 65, 24, "Cancel")
 newConfirm:SetPoint("BOTTOMRIGHT", newDialog.body, "BOTTOMRIGHT", -PAD, PAD)
 newCancel:SetPoint( "RIGHT", newConfirm, "LEFT", -4, 0)
@@ -1342,7 +1277,7 @@ newConfirm:SetScript("OnClick", function()
         return
     end
     newDialog:Hide()
-    StartSelector(function(barIds)
+    ShowSaveBarDialog('Select bars -- "' .. name .. '"', function(barIds)
         ABS:SaveProfile(name, barIds)
         selectedProfile = name
         RefreshList()
