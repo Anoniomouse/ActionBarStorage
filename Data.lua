@@ -26,23 +26,43 @@ local MAX_BAR  = #ABS.BARS          -- 18
 local MAX_SLOT = MAX_BAR * 12       -- 216
 
 -- Candidate frame names per bar. Blizzard names first, then ElvUI, Bartender4, Dominos.
+-- Note: barIds 2-4 (slots 13-48) have NO Blizzard default bar — only addon bars.
+-- The Blizzard multi-bars map to barIds 5-8 (slots 49-96).
 ABS.BAR_FRAME_CANDIDATES = {
-    [1] = { "MainMenuBar", "MainActionBarFrame", "ActionBar1",
-            "ElvUI_Bar1",  "BT4Bar1",  "DominosActionBar1" },
-    [2] = { "MultiBarBottomLeft",  "ActionBar2",
-            "ElvUI_Bar2",  "BT4Bar2",  "DominosActionBar2" },
-    [3] = { "MultiBarBottomRight", "ActionBar3",
-            "ElvUI_Bar3",  "BT4Bar3",  "DominosActionBar3" },
-    [4] = { "MultiBarRight",       "ActionBar4",
-            "ElvUI_Bar4",  "BT4Bar4",  "DominosActionBar4" },
-    [5] = { "MultiBarLeft",        "ActionBar5",
-            "ElvUI_Bar5",  "BT4Bar5",  "DominosActionBar5" },
-    [6] = { "ActionBar6",  "MultiBar5",
-            "ElvUI_Bar6",  "BT4Bar6",  "DominosActionBar6" },
-    [7] = { "ActionBar7",  "MultiBar6",
-            "ElvUI_Bar7",  "BT4Bar7",  "DominosActionBar7" },
-    [8] = { "ActionBar8",  "MultiBar7",
-            "ElvUI_Bar8",  "BT4Bar8",  "DominosActionBar8" },
+    [1] = { "MainMenuBar", "MainActionBarFrame",
+            "ActionBar1", "ElvUI_Bar1", "BT4Bar1", "DominosActionBar1" },
+    [2] = { "ActionBar2", "ElvUI_Bar2", "BT4Bar2", "DominosActionBar2" },
+    [3] = { "ActionBar3", "ElvUI_Bar3", "BT4Bar3", "DominosActionBar3" },
+    [4] = { "ActionBar4", "ElvUI_Bar4", "BT4Bar4", "DominosActionBar4" },
+    [5] = { "MultiBarBottomLeft",  "ActionBar5",
+            "ElvUI_Bar5", "BT4Bar5", "DominosActionBar5" },
+    [6] = { "MultiBarBottomRight", "ActionBar6",
+            "ElvUI_Bar6", "BT4Bar6", "DominosActionBar6" },
+    [7] = { "MultiBarRight",       "ActionBar7",
+            "ElvUI_Bar7", "BT4Bar7", "DominosActionBar7" },
+    [8] = { "MultiBarLeft",        "ActionBar8",
+            "ElvUI_Bar8", "BT4Bar8", "DominosActionBar8" },
+}
+
+-- For Blizzard default bars: known button name ranges used to build cover frames.
+-- {barId, first button global, last button global}
+-- Cover frames span btn1 TOPLEFT → btn12 BOTTOMRIGHT so IsMouseOver works regardless
+-- of the parent hierarchy, which changed significantly in Midnight 12.0.
+-- Midnight 12.0 renamed buttons to <BarName>ButtonContainer{N}; old names kept as fallback.
+ABS.BLIZZARD_BAR_BUTTONS = {
+    -- Midnight 12.0 new-style names (ButtonContainer suffix)
+    { 1, "MainActionBarButtonContainer1",        "MainActionBarButtonContainer12"        },
+    { 3, "MultiBarRightButtonContainer1",        "MultiBarRightButtonContainer12"        },
+    { 4, "MultiBarLeftButtonContainer1",         "MultiBarLeftButtonContainer12"         },
+    { 5, "MultiBarBottomRightButtonContainer1",  "MultiBarBottomRightButtonContainer12"  },
+    { 6, "MultiBarBottomLeftButtonContainer1",   "MultiBarBottomLeftButtonContainer12"   },
+    -- Old-style names (still present in Midnight for bars using higher slot ranges)
+    { 7, "MultiBarRightButton1",                 "MultiBarRightButton12"                 },
+    { 8, "MultiBarLeftButton1",                  "MultiBarLeftButton12"                  },
+    -- Pre-Midnight fallback names
+    { 1, "ActionButton1",                        "ActionButton12"                        },
+    { 5, "MultiBarBottomLeftButton1",            "MultiBarBottomLeftButton12"            },
+    { 6, "MultiBarBottomRightButton1",           "MultiBarBottomRightButton12"           },
 }
 
 -- Returns the first visible frame found for a bar, or nil.
@@ -116,18 +136,66 @@ function ABS:GetVisibleBarFrames()
         f = EnumerateFrames(f)
     end
 
+    -- Walk up from a button until we find a frame that's larger than one button slot.
+    -- In Midnight 12.0, each button lives in a 45x45 per-button wrapper; the actual
+    -- bar container is one level higher.
+    local ONE_BTN = 46   -- slightly above 45-px button size
+    local function FindBarFrame(btn)
+        local f = btn:GetParent()
+        for _ = 1, 6 do
+            if not f then break end
+            local pok, pname = pcall(function() return f:GetName() end)
+            if pok and pname and (pname == "UIParent" or pname == "WorldFrame") then break end
+            local wok, w = pcall(function() return f:GetWidth()  end)
+            local hok, h = pcall(function() return f:GetHeight() end)
+            if wok and hok and w and h and (w > ONE_BTN or h > ONE_BTN) then return f end
+            local ppok, p = pcall(function() return f:GetParent() end)
+            if not ppok or not p then break end
+            f = p
+        end
+        return btn:GetParent()
+    end
+
     -- Require ≥2 visible buttons so we don't pick up stray buttons.
-    -- Use the first button's parent as the representative bar frame.
     for barId, buttons in pairs(barButtons) do
         local skip = (barId == 1 and overrideActive)
         if not skip and barId >= 1 and barId <= MAX_BAR and #buttons >= 2 then
-            local ok, parent = pcall(function() return buttons[1]:GetParent() end)
-            if ok and parent then found[barId] = parent end
+            local ok, barFrame = pcall(function() return FindBarFrame(buttons[1]) end)
+            if ok and barFrame then found[barId] = barFrame end
         end
     end
 
-    -- Fallback: for any bar still not found, check Blizzard's known frame names directly.
-    -- Covers cases where neither .action nor GetAttribute("action") is accessible.
+    -- Fallback tier 2: Blizzard default bars via cover frames.
+    -- Create (once, cached) a transparent frame anchored btn1-TOPLEFT to btn12-BOTTOMRIGHT.
+    -- This covers the exact visible area regardless of the parent hierarchy, which
+    -- changed significantly in Midnight 12.0 making GetParent() unreliable for bounds.
+    ABS._coverFrames = ABS._coverFrames or {}
+    for _, entry in ipairs(self.BLIZZARD_BAR_BUTTONS) do
+        local barId, nameFirst, nameLast = entry[1], entry[2], entry[3]
+        if not found[barId] then
+            local skip = (barId == 1 and overrideActive)
+            if not skip then
+                local btnFirst = _G[nameFirst]
+                local btnLast  = _G[nameLast]
+                local ok1 = btnFirst and pcall(function() return btnFirst:IsShown() end) and btnFirst:IsShown()
+                local ok2 = btnLast  and pcall(function() return btnLast:IsShown()  end) and btnLast:IsShown()
+                if ok1 and ok2 then
+                    local cf = ABS._coverFrames[barId]
+                    if not cf then
+                        cf = CreateFrame("Frame", nil, UIParent)
+                        cf:EnableMouse(false)
+                        cf:SetPoint("TOPLEFT",     btnFirst, "TOPLEFT",     0, 0)
+                        cf:SetPoint("BOTTOMRIGHT", btnLast,  "BOTTOMRIGHT", 0, 0)
+                        ABS._coverFrames[barId] = cf
+                    end
+                    found[barId] = cf
+                end
+            end
+        end
+    end
+
+    -- Fallback tier 3: named Blizzard / addon frame globals.
+    -- Catches bars that weren't found via button scan (e.g., addon bars with no f.action).
     for barId, candidates in pairs(self.BAR_FRAME_CANDIDATES) do
         if not found[barId] then
             local skip = (barId == 1 and overrideActive)

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.7] - 2026-07-30
+
+### Fixed
+- Bar selector now detects Blizzard default bars without any UI addon installed
+- Midnight 12.0 renamed action button globals (e.g. ActionButton1 → MainActionBarButtonContainer1); detection updated for new names
+- Parent-walk logic finds the full bar container frame instead of the 45×45 per-button wrapper
+- Cover frames anchored to first and last button ensure accurate hover detection for all bar layouts
+
 ## [1.0.6] - 2026-07-23
 
 ### Fixed
